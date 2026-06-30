@@ -1,4 +1,9 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useExecutionRouter, type ExecutionTask, type ExecutionBackend } from '@/hooks/useExecutionRouter';
+import { useTaskQueue } from '@/hooks/useTaskQueue';
+import { useAgentRealtime } from '@/hooks/useAgentRealtime';
 import {
   ReactFlow,
   Background,
@@ -6,1369 +11,1779 @@ import {
   MiniMap,
   useNodesState,
   useEdgesState,
+  addEdge,
   Handle,
   Position,
   type Node,
   type Edge,
-  type NodeTypes,
-  type EdgeTypes,
-  type ConnectionMode,
-  Panel,
-  useReactFlow,
-  ReactFlowProvider,
+  type Connection,
+  MarkerType,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Brain,
-  Sparkles,
-  TrendingUp,
-  Palette,
-  Code2,
-  Search,
-  Rocket,
-  Bot,
-  X,
-  ChevronRight,
-  Play,
-  Pause,
-  Square,
-  Zap,
-  Settings,
-  Activity,
-  ListTodo,
-  Terminal,
-  CircleDot,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  RotateCcw,
-  Plus,
-  Filter,
-  LayoutGrid,
-  Wifi,
-  WifiOff,
-  Crown,
-  Cpu,
-  BarChart3,
-  Loader2,
-  Circle,
-  GripHorizontal,
+  Brain, Sparkles, Palette, Layers, Zap, Wand2, Database,
+  GitBranch, TrendingUp, BarChart3, Coins, Workflow, Shield,
+  Code2, Globe, Search, Cpu, HardDrive, Microscope,
+  Play, Pause, Plus, Filter, LayoutGrid, Search as SearchIcon,
+  X, ChevronRight, Activity, Timer,
+  Bot, CircleDot,
+  Circle, Hexagon,
+  Radio, Wifi, ZapOff, Crown,
+  Terminal, Server,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import { supabase } from '@/lib/supabase';
 
-// ─── Types ───────────────────────────────────────────────────────────────
+import AntTrailEdge from '@/components/AntTrailEdge';
+import HermesPanel from '@/components/HermesPanel';
 
-interface LoopAgent {
-  id: string;
-  name: string;
-  agent_type: 'brain' | 'meta' | 'trader' | 'designer' | 'developer' | 'researcher' | 'deploy' | 'worker';
-  status: 'idle' | 'running' | 'paused' | 'error' | 'offline';
+// ═══════════════════════════════════════════════════════════════
+// TYPES & INTERFACES
+// ═══════════════════════════════════════════════════════════════
+
+interface AgentDef {
+  skill_key: string;
+  display_name: string;
+  category: string;
   description: string;
-  config: Record<string, unknown>;
-  avatar_url?: string;
-  skills: string[];
-  parent_agent_id?: string;
-  tier_required: number;
-  max_concurrent_tasks: number;
-  created_at?: string;
-  updated_at?: string;
+  icon: string;
 }
 
-interface LoopAgentTask {
-  id: string;
-  agent_id: string;
-  title: string;
+type AgentStatus = 'active' | 'idle' | 'error' | 'paused';
+type LayoutMode = 'radial' | 'force' | 'grid';
+
+interface AgentState {
+  skill_key: string;
+  display_name?: string;
+  category?: string;
   description?: string;
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'paused_awaiting_confirmation';
-  priority: 'low' | 'medium' | 'high' | 'critical';
-  backend?: string;
-  execution_result?: string;
-  created_by?: string;
-  phase?: string;
-  legal_check_status?: string;
-  created_at?: string;
-  updated_at?: string;
+  icon?: string;
+  status: AgentStatus;
+  tasks: number;
+  successRate: number;
+  lastActive: string;
+  config: Record<string, unknown>;
+  activityLog: string[];
 }
 
-interface ExecutionRecord {
-  id: string;
-  backend: string;
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  timestamp: string;
-  prompt: string;
-  result?: string;
+// ═══════════════════════════════════════════════════════════════
+// MOCK DATA — AGENT REGISTRY
+// ═══════════════════════════════════════════════════════════════
+
+const AGENT_REGISTRY: AgentDef[] = [
+  { skill_key: 'grok-orchestrator', display_name: 'Grok Orchestrator', category: 'core_orchestrator', description: 'Zentrale Steuerung aller Agenten. Hauptbrain des Schwarm-Bewusstseins.', icon: 'Brain' },
+  { skill_key: 'divine-design-director', display_name: 'Divine Design Director', category: 'creative_studio', description: 'Creative Director für göttliches Webdesign. Orchestriert kompletten Workflow.', icon: 'Sparkles' },
+  { skill_key: 'frontend-design', display_name: 'Frontend Design', category: 'creative_studio', description: 'Hochwertige Frontend-Interfaces für Brand Surfaces.', icon: 'Palette' },
+  { skill_key: 'ui-ux-pro-max', display_name: 'UI/UX Pro Max', category: 'creative_studio', description: '50+ Styles, 161 Paletten, 57 Font-Paarungen für perfektes UI/UX.', icon: 'Layers' },
+  { skill_key: 'motion-principles-master', display_name: 'Motion Principles', category: 'creative_studio', description: 'GSAP, Scroll-Animationen, Mikro-Interaktionen, Performance.', icon: 'Zap' },
+  { skill_key: 'visual-effects-orchestrator', display_name: 'VFX Orchestrator', category: 'creative_studio', description: '3D/VFX/WebGL — Spline, WebGL-Shader, Lottie, Scroll-Sequenzen.', icon: 'Wand2' },
+  { skill_key: 'creative-memory-system', display_name: 'Creative Memory', category: 'creative_studio', description: 'Persistenz von Design-Entscheidungen über Projekte hinweg.', icon: 'Database' },
+  { skill_key: 'design-agency-workflow', display_name: 'Design Agency WF', category: 'creative_studio', description: 'Operativer Workflow: Brief → Discovery → Design → Build → Review.', icon: 'GitBranch' },
+  { skill_key: 'project-loop-trading', display_name: 'Project Loop Trading', category: 'trading_capital', description: 'XAUUSD/Gold Signale mit Bollinger + RSI + MACD + ICT.', icon: 'TrendingUp' },
+  { skill_key: 'multi-agent-trading', display_name: 'Multi-Agent Trading', category: 'trading_capital', description: 'Multi-Perspektiven-Analyse für Trading-Entscheidungen.', icon: 'BarChart3' },
+  { skill_key: 'cash-orchestrator', display_name: 'Cash Orchestrator', category: 'trading_capital', description: 'Autonome Kapital-Allokation: Trading + DeFi für Robot-Body.', icon: 'Coins' },
+  { skill_key: 'unified-agent-workflow', display_name: 'Unified Agent WF', category: 'agentic_dev', description: 'Master-Workflow: TDD, Debugging, Subagent-Implementation.', icon: 'Workflow' },
+  { skill_key: 'ecc-v2', display_name: 'ECC v2', category: 'agentic_dev', description: '53+ Subagents, 185+ Skills, Security Scans, Multi-Agent.', icon: 'Shield' },
+  { skill_key: 'superpowers-dev', display_name: 'Superpowers Dev', category: 'agentic_dev', description: 'Disziplinierte Software-Entwicklung mit TDD & Review.', icon: 'Code2' },
+  { skill_key: 'browser-automation', display_name: 'Browser Automation', category: 'agentic_dev', description: 'Playwright-Automatisierung für Web-Tasks & Scraping.', icon: 'Globe' },
+  { skill_key: 'browser-design-auditor', display_name: 'Design Auditor', category: 'agentic_dev', description: 'Visuelles QA: Screenshots, Responsive, Performance, A11y.', icon: 'Search' },
+  { skill_key: 'loop-operations', display_name: 'Loop Operations', category: 'operations_memory', description: 'Zentrale Operations: Supabase Memory, Reporting, Tasks.', icon: 'Cpu' },
+  { skill_key: 'persistent-memory', display_name: 'Persistent Memory', category: 'operations_memory', description: 'Langfristige Kontext-Kompression über Sessions.', icon: 'HardDrive' },
+  { skill_key: 'deep-research', display_name: 'Deep Research', category: 'operations_memory', description: 'Multi-Agent Deep Research mit adaptivem Routing.', icon: 'Microscope' },
+];
+
+const INITIAL_SPAWNED_KEYS = [
+  'divine-design-director',
+  'project-loop-trading',
+  'unified-agent-workflow',
+  'loop-operations',
+];
+
+// ═══════════════════════════════════════════════════════════════
+// ICON MAP
+// ═══════════════════════════════════════════════════════════════
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ICON_MAP: Record<string, React.ComponentType<any>> = {
+  Brain, Sparkles, Palette, Layers, Zap, Wand2, Database,
+  GitBranch, TrendingUp, BarChart3, Coins, Workflow, Shield,
+  Code2, Globe, Search, Cpu, HardDrive, Microscope,
+};
+
+// ═══════════════════════════════════════════════════════════════
+// CATEGORY CONFIG
+// ═══════════════════════════════════════════════════════════════
+
+const CATEGORY_CONFIG: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  core_orchestrator: { label: 'Core', color: '#FF8C5A', bg: 'rgba(255,140,90,0.12)', border: 'rgba(255,140,90,0.3)' },
+  creative_studio: { label: 'Creative', color: '#B98BFF', bg: 'rgba(185,139,255,0.12)', border: 'rgba(185,139,255,0.3)' },
+  trading_capital: { label: 'Trading', color: '#36CFC9', bg: 'rgba(54,207,201,0.12)', border: 'rgba(54,207,201,0.3)' },
+  agentic_dev: { label: 'Dev', color: '#FF6B6B', bg: 'rgba(255,107,107,0.12)', border: 'rgba(255,107,107,0.3)' },
+  operations_memory: { label: 'Ops', color: '#FFD166', bg: 'rgba(255,209,102,0.12)', border: 'rgba(255,209,102,0.3)' },
+};
+
+// ═══════════════════════════════════════════════════════════════
+// UTILITY FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+
+function calculateRadialPosition(index: number, total: number, radius: number = 350) {
+  const angle = (index / total) * 2 * Math.PI - Math.PI / 2;
+  return {
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius,
+  };
 }
+
+function calculateGridPosition(index: number, cols: number = 4, spacing: number = 250) {
+  const row = Math.floor(index / cols);
+  const col = index % cols;
+  const offsetX = (cols * spacing) / 2;
+  const offsetY = spacing;
+  return {
+    x: col * spacing - offsetX,
+    y: row * spacing + offsetY,
+  };
+}
+
+function generateMockAgentState(skillKey: string): AgentState {
+  const statuses: AgentStatus[] = ['active', 'idle', 'active', 'active', 'paused'];
+  const status = statuses[Math.floor(Math.random() * statuses.length)];
+  return {
+    skill_key: skillKey,
+    status,
+    tasks: Math.floor(Math.random() * 200) + 10,
+    successRate: 85 + Math.floor(Math.random() * 14),
+    lastActive: new Date(Date.now() - Math.floor(Math.random() * 3600000)).toLocaleTimeString('de-DE'),
+    config: { autoRetry: true, maxConcurrent: 5, priority: 'normal' },
+    activityLog: [
+      `[${new Date().toLocaleTimeString('de-DE')}] Agent gestartet`,
+      `[${new Date().toLocaleTimeString('de-DE')}] Aufgabe #${Math.floor(Math.random() * 100)} abgeschlossen`,
+      `[${new Date().toLocaleTimeString('de-DE')}] Sync mit Hauptbrain`,
+    ],
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SPARKLINE COMPONENT
+// ═══════════════════════════════════════════════════════════════
+
+function MiniSparkline({ values, color }: { values: number[]; color: string }) {
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const range = max - min || 1;
+  const w = 40;
+  const h = 16;
+  const barW = w / values.length - 1;
+
+  return (
+    <svg width={w} height={h} className="opacity-80">
+      {values.map((v, i) => {
+        const barH = ((v - min) / range) * (h - 2) + 2;
+        return (
+          <rect
+            key={i}
+            x={i * (barW + 1)}
+            y={h - barH}
+            width={barW}
+            height={barH}
+            rx={1}
+            fill={color}
+            opacity={0.4 + (v - min) / range * 0.6}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// STATUS DOT
+// ═══════════════════════════════════════════════════════════════
+
+function StatusDot({ status }: { status: AgentStatus }) {
+  const config = {
+    active: { color: '#36CFC9', glow: 'rgba(54,207,201,0.5)', label: 'Aktiv' },
+    idle: { color: '#FFD166', glow: 'rgba(255,209,102,0.5)', label: 'Idle' },
+    error: { color: '#FF6B6B', glow: 'rgba(255,107,107,0.5)', label: 'Fehler' },
+    paused: { color: '#5E626A', glow: 'rgba(94,98,106,0.5)', label: 'Pausiert' },
+  };
+  const c = config[status];
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span
+        className="inline-block w-2 h-2 rounded-full"
+        style={{
+          backgroundColor: c.color,
+          boxShadow: `0 0 6px ${c.glow}`,
+          animation: status === 'active' ? 'pulseGlow 2s ease-in-out infinite' : 'none',
+        }}
+      />
+      <span className="text-[10px]" style={{ color: c.color, fontFamily: '"IBM Plex Mono", monospace' }}>
+        {c.label}
+      </span>
+    </span>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAINBRAIN NODE
+// ═══════════════════════════════════════════════════════════════
+
+interface MainBrainNodeData {
+  label: string;
+  totalAgents: number;
+  totalTasks: number;
+  uptime: number;
+}
+
+function MainBrainNode({ data, selected }: { data: MainBrainNodeData; selected?: boolean }) {
+  return (
+    <div
+      className="relative"
+      style={{
+        width: 260,
+        height: 120,
+        borderRadius: 16,
+        background: 'linear-gradient(135deg, rgba(255,140,90,0.15), rgba(185,139,255,0.1))',
+        border: `2px solid ${selected ? '#FF8C5A' : 'rgba(255,140,90,0.4)'}`,
+        boxShadow: selected
+          ? '0 0 30px rgba(255,140,90,0.4), inset 0 0 20px rgba(255,140,90,0.05)'
+          : '0 0 20px rgba(255,140,90,0.2), inset 0 0 15px rgba(255,140,90,0.03)',
+        animation: 'mainBrainPulse 4s ease-in-out infinite',
+        transition: 'all 0.3s ease',
+        cursor: 'pointer',
+        backdropFilter: 'blur(20px)',
+      }}
+    >
+      {/* Handles */}
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Left} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
+
+      <div className="flex flex-col items-center justify-center h-full px-4 relative z-10">
+        {/* Icon + Title */}
+        <div className="flex items-center gap-2 mb-2">
+          <Brain size={22} style={{ color: '#FF8C5A' }} />
+          <span
+            className="text-sm font-bold text-white tracking-wide"
+            style={{ fontFamily: '"Space Grotesk", sans-serif' }}
+          >
+            LOOP HAUPTBRAIN
+          </span>
+        </div>
+
+        {/* Stats Row */}
+        <div className="flex items-center gap-3 text-[11px]" style={{ color: '#A1A4AA', fontFamily: '"IBM Plex Mono", monospace' }}>
+          <span style={{ color: '#FF8C5A' }}>{data.totalAgents} Agents</span>
+          <span style={{ color: '#5E626A' }}>•</span>
+          <span style={{ color: '#B98BFF' }}>{data.totalTasks} Tasks</span>
+          <span style={{ color: '#5E626A' }}>•</span>
+          <span style={{ color: '#36CFC9' }}>{data.uptime}%</span>
+        </div>
+
+        {/* Pulse indicator */}
+        <div
+          className="absolute top-2 right-3 flex items-center gap-1"
+          style={{ animation: 'fadeInOut 2s ease-in-out infinite' }}
+        >
+          <Radio size={10} style={{ color: '#36CFC9' }} />
+          <span className="text-[9px]" style={{ color: '#36CFC9', fontFamily: '"IBM Plex Mono", monospace' }}>
+            LIVE
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// META AGENT NODE (Kimi) — v5.1
+// ═══════════════════════════════════════════════════════════════
+
+function MetaAgentNode({ data }: { data: AgentState }) {
+  const isRunning = data.status === 'active';
+  return (
+    <div className="group relative" style={{ width: 240, cursor: 'pointer' }}>
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <div className="absolute -top-3 left-1/2 -translate-x-1/2 z-10">
+        <div className="w-6 h-6 rounded-full flex items-center justify-center text-xs"
+          style={{ background: 'linear-gradient(135deg, #F5C542, #FF8C5A)', color: '#000', fontWeight: 700 }}>K</div>
+      </div>
+      <div className="absolute inset-0 rounded-2xl blur-xl opacity-40 group-hover:opacity-70 transition-all"
+        style={{ background: 'linear-gradient(135deg, #F5C542, #FF8C5A, #B98BFF)', transform: 'scale(1.15)' }} />
+      <div className="relative rounded-2xl overflow-hidden transition-all duration-300 group-hover:scale-[1.03]"
+        style={{ background: 'linear-gradient(135deg, rgba(255,140,90,0.15), rgba(185,139,255,0.15))',
+          border: isRunning ? '2px solid rgba(245,197,66,0.6)' : '2px solid rgba(255,140,90,0.3)', backdropFilter: 'blur(12px)' }}>
+        {isRunning && <div className="absolute inset-0 rounded-2xl animate-pulse" style={{ border: '2px solid rgba(245,197,66,0.4)' }} />}
+        <div className="p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ background: 'linear-gradient(135deg, #FF8C5A, #B98BFF)' }}>
+              <Crown size={16} color="#000" /></div>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold truncate" style={{ color: '#F5C542' }}>{data.display_name}</div>
+              <div className="text-[10px]" style={{ color: '#A1A4AA' }}>Meta Orchestrator</div>
+            </div>
+            <div className="w-2.5 h-2.5 rounded-full animate-pulse"
+              style={{ backgroundColor: data.status === 'active' ? '#36CFC9' : data.status === 'idle' ? '#F5C542' : '#EF4444',
+                boxShadow: `0 0 8px ${data.status === 'active' ? '#36CFC9' : data.status === 'idle' ? '#F5C542' : '#EF4444'}` }} />
+          </div>
+          <div className="text-xs mb-3 line-clamp-2" style={{ color: '#A1A4AA' }}>{data.description}</div>
+          <div className="flex items-center gap-3 text-[10px]" style={{ color: '#5E626A' }}>
+            <span>Tasks: <strong style={{ color: '#F5C542' }}>{data.tasks}</strong></span>
+            <span>Rate: <strong style={{ color: '#36CFC9' }}>{data.successRate}%</strong></span>
+          </div>
+          <div className="flex items-end gap-0.5 h-4 mt-2 opacity-60">
+            {[40, 65, 45, 80, 55, 90, 70, 85].map((h, i) => (
+              <div key={i} className="flex-1 rounded-sm" style={{ height: `${h}%`, background: i === 7 ? '#F5C542' : '#5E626A' }} />
+            ))}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AGENT NODE
+// ═══════════════════════════════════════════════════════════════
 
 interface AgentNodeData {
-  agent: LoopAgent;
-  onSelect: (agent: LoopAgent) => void;
-  simulationMode: boolean;
+  skill_key: string;
+  display_name: string;
+  category: string;
+  description: string;
+  icon: string;
+  status: AgentStatus;
+  tasks: number;
+  successRate: number;
+  sparkline: number[];
 }
 
-// ─── Constants ───────────────────────────────────────────────────────────
-
-const AGENT_TYPE_CONFIG: Record<string, { color: string; bg: string; border: string; icon: React.ElementType; label: string }> = {
-  brain: { color: 'text-amber-400', bg: 'bg-amber-400/10', border: 'border-amber-400', icon: Brain, label: 'BRAIN' },
-  meta: { color: 'text-yellow-400', bg: 'bg-yellow-400/10', border: 'border-yellow-400', icon: Crown, label: 'META' },
-  trader: { color: 'text-emerald-400', bg: 'bg-emerald-400/10', border: 'border-emerald-400', icon: TrendingUp, label: 'TRADER' },
-  designer: { color: 'text-purple-400', bg: 'bg-purple-400/10', border: 'border-purple-400', icon: Palette, label: 'DESIGNER' },
-  developer: { color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-400', icon: Code2, label: 'DEVELOPER' },
-  researcher: { color: 'text-cyan-400', bg: 'bg-cyan-400/10', border: 'border-cyan-400', icon: Search, label: 'RESEARCHER' },
-  deploy: { color: 'text-red-400', bg: 'bg-red-400/10', border: 'border-red-400', icon: Rocket, label: 'DEPLOY' },
-  worker: { color: 'text-gray-400', bg: 'bg-gray-400/10', border: 'border-gray-400', icon: Bot, label: 'WORKER' },
-};
-
-const STATUS_COLORS: Record<string, { dot: string; bg: string; text: string; label: string }> = {
-  idle: { dot: 'bg-gray-400', bg: 'bg-gray-400/10', text: 'text-gray-400', label: 'IDLE' },
-  running: { dot: 'bg-emerald-400', bg: 'bg-emerald-400/10', text: 'text-emerald-400', label: 'RUNNING' },
-  paused: { dot: 'bg-yellow-400', bg: 'bg-yellow-400/10', text: 'text-yellow-400', label: 'PAUSED' },
-  error: { dot: 'bg-red-500', bg: 'bg-red-500/10', text: 'text-red-500', label: 'ERROR' },
-  offline: { dot: 'bg-gray-600', bg: 'bg-gray-600/10', text: 'text-gray-600', label: 'OFFLINE' },
-};
-
-const PRIORITY_COLORS: Record<string, string> = {
-  low: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
-  medium: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-  high: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-  critical: 'bg-red-500/20 text-red-400 border-red-500/30',
-};
-
-// ─── Helper Components ───────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: string }) {
-  const s = STATUS_COLORS[status] || STATUS_COLORS.idle;
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${s.bg} ${s.text} border border-white/5`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${s.dot} ${status === 'running' ? 'animate-pulse' : ''}`} />
-      {s.label}
-    </span>
-  );
-}
-
-function TypeBadge({ type }: { type: string }) {
-  const cfg = AGENT_TYPE_CONFIG[type] || AGENT_TYPE_CONFIG.worker;
-  const Icon = cfg.icon;
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest ${cfg.bg} ${cfg.color} border border-white/5`}>
-      <Icon className="w-3 h-3" />
-      {cfg.label}
-    </span>
-  );
-}
-
-// ─── Custom Nodes ────────────────────────────────────────────────────────
-
-function BrainNode({ data }: { data: AgentNodeData }) {
-  const { agent, onSelect, simulationMode } = data;
-  const isActive = agent.status === 'running' || simulationMode;
+function AgentNode({ data, selected }: { data: AgentNodeData; selected?: boolean }) {
+  const catConfig = CATEGORY_CONFIG[data.category] || CATEGORY_CONFIG.operations_memory;
+  const IconComp = ICON_MAP[data.icon] || Bot;
+  const statusColors: Record<AgentStatus, string> = {
+    active: '#36CFC9',
+    idle: '#FFD166',
+    error: '#FF6B6B',
+    paused: '#5E626A',
+  };
 
   return (
     <div
-      onClick={() => onSelect(agent)}
-      className="relative cursor-pointer group"
-      style={{ width: 200, height: 120 }}
+      className="relative group"
+      style={{
+        width: 200,
+        height: 100,
+        borderRadius: 12,
+        backgroundColor: selected ? '#141518' : '#0C0D0F',
+        border: `1.5px solid ${selected ? catConfig.color : 'rgba(255,255,255,0.08)'}`,
+        boxShadow: selected
+          ? `0 0 20px ${catConfig.bg}, 0 4px 12px rgba(0,0,0,0.5)`
+          : '0 2px 8px rgba(0,0,0,0.4)',
+        transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+        cursor: 'pointer',
+        backdropFilter: 'blur(16px)',
+      }}
+      onMouseEnter={(e) => {
+        if (!selected) {
+          e.currentTarget.style.transform = 'scale(1.03)';
+          e.currentTarget.style.borderColor = catConfig.color;
+          e.currentTarget.style.boxShadow = `0 0 15px ${catConfig.bg}, 0 4px 12px rgba(0,0,0,0.5)`;
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!selected) {
+          e.currentTarget.style.transform = 'scale(1)';
+          e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)';
+          e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.4)';
+        }
+      }}
     >
-      {/* Pulse ring animation */}
-      {isActive && (
-        <motion.div
-          className="absolute inset-0 rounded-2xl border-2 border-amber-400/40"
-          animate={{ scale: [1, 1.08, 1], opacity: [0.6, 0, 0.6] }}
-          transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
-          style={{ margin: -4 }}
-        />
-      )}
-      {/* Second pulse ring */}
-      {isActive && (
-        <motion.div
-          className="absolute inset-0 rounded-2xl border border-amber-400/20"
-          animate={{ scale: [1, 1.15, 1], opacity: [0.4, 0, 0.4] }}
-          transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut', delay: 0.5 }}
-          style={{ margin: -8 }}
-        />
-      )}
+      {/* Handles */}
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Left} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
 
-      {/* Main card */}
-      <div className="w-full h-full rounded-xl bg-gradient-to-br from-neutral-900 to-black border-2 border-amber-400/60 shadow-[0_0_30px_rgba(251,191,36,0.15)] flex flex-col items-center justify-center gap-2 relative overflow-hidden transition-all duration-300 group-hover:border-amber-400 group-hover:shadow-[0_0_40px_rgba(251,191,36,0.25)]">
-        {/* Subtle glow overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-amber-400/5 to-transparent pointer-events-none" />
-
-        {/* Grid pattern overlay */}
-        <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(circle, #fbbf24 1px, transparent 1px)', backgroundSize: '12px 12px' }} />
-
-        <motion.div
-          animate={isActive ? { rotate: [0, 5, -5, 0] } : {}}
-          transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
-        >
-          <Brain className="w-10 h-10 text-amber-400" />
-        </motion.div>
-        <div className="text-center z-10">
-          <p className="text-white font-bold text-sm leading-tight">{agent.name}</p>
-          <div className="flex items-center justify-center gap-2 mt-1.5">
-            <StatusBadge status={agent.status} />
-            <TypeBadge type={agent.agent_type} />
-          </div>
-        </div>
-
-        {/* Decorative corner accents */}
-        <div className="absolute top-0 left-0 w-3 h-3 border-t border-l border-amber-400/40 rounded-tl-xl" />
-        <div className="absolute top-0 right-0 w-3 h-3 border-t border-r border-amber-400/40 rounded-tr-xl" />
-        <div className="absolute bottom-0 left-0 w-3 h-3 border-b border-l border-amber-400/40 rounded-bl-xl" />
-        <div className="absolute bottom-0 right-0 w-3 h-3 border-b border-r border-amber-400/40 rounded-br-xl" />
-      </div>
-
-      <Handle type="source" position={Position.Bottom} id="brain-out" className="!bg-amber-400 !w-2.5 !h-2.5 !border-2 !border-black" />
-      <Handle type="source" position={Position.Left} id="brain-left" className="!bg-amber-400 !w-2.5 !h-2.5 !border-2 !border-black" />
-      <Handle type="source" position={Position.Right} id="brain-right" className="!bg-amber-400 !w-2.5 !h-2.5 !border-2 !border-black" />
-    </div>
-  );
-}
-
-function MetaNode({ data }: { data: AgentNodeData }) {
-  const { agent, onSelect, simulationMode } = data;
-  const isActive = agent.status === 'running' || simulationMode;
-
-  return (
-    <div
-      onClick={() => onSelect(agent)}
-      className="relative cursor-pointer group"
-      style={{ width: 180, height: 100 }}
-    >
-      {isActive && (
-        <motion.div
-          className="absolute inset-0 rounded-2xl border-2 border-yellow-400/30"
-          animate={{ scale: [1, 1.06, 1], opacity: [0.5, 0, 0.5] }}
-          transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
-          style={{ margin: -3 }}
-        />
-      )}
-
-      <div className="w-full h-full rounded-xl bg-gradient-to-br from-neutral-900 to-black border-2 border-yellow-400/50 shadow-[0_0_20px_rgba(250,204,21,0.12)] flex flex-col items-center justify-center gap-1.5 relative overflow-hidden transition-all duration-300 group-hover:border-yellow-400 group-hover:shadow-[0_0_35px_rgba(250,204,21,0.2)]">
-        <div className="absolute inset-0 bg-gradient-to-t from-yellow-400/5 to-transparent pointer-events-none" />
-        <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(circle, #facc15 1px, transparent 1px)', backgroundSize: '10px 10px' }} />
-
-        <motion.div
-          animate={isActive ? { scale: [1, 1.1, 1] } : {}}
-          transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-        >
-          <Crown className="w-8 h-8 text-yellow-400" />
-        </motion.div>
-        <div className="text-center z-10">
-          <p className="text-white font-bold text-xs leading-tight">{agent.name}</p>
-          <div className="flex items-center justify-center gap-1.5 mt-1">
-            <StatusBadge status={agent.status} />
-            <TypeBadge type={agent.agent_type} />
-          </div>
-        </div>
-      </div>
-
-      <Handle type="target" position={Position.Top} id="meta-in" className="!bg-yellow-400 !w-2 !h-2 !border-2 !border-black" />
-      <Handle type="source" position={Position.Bottom} id="meta-out" className="!bg-yellow-400 !w-2 !h-2 !border-2 !border-black" />
-      <Handle type="source" position={Position.Left} id="meta-left" className="!bg-yellow-400 !w-2 !h-2 !border-2 !border-black" />
-      <Handle type="source" position={Position.Right} id="meta-right" className="!bg-yellow-400 !w-2 !h-2 !border-2 !border-black" />
-    </div>
-  );
-}
-
-function AgentNode({ data }: { data: AgentNodeData }) {
-  const { agent, onSelect, simulationMode } = data;
-  const cfg = AGENT_TYPE_CONFIG[agent.agent_type] || AGENT_TYPE_CONFIG.worker;
-  const isActive = agent.status === 'running' || simulationMode;
-  const Icon = cfg.icon;
-
-  return (
-    <div
-      onClick={() => onSelect(agent)}
-      className="relative cursor-pointer group"
-      style={{ width: 160, height: 80 }}
-    >
-      {isActive && (
-        <motion.div
-          className={`absolute inset-0 rounded-xl border border-current opacity-30`}
-          style={{ color: 'var(--agent-color)' }}
-          animate={{ scale: [1, 1.05, 1], opacity: [0.4, 0, 0.4] }}
-          transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-        />
-      )}
-
-      <div
-        className={`w-full h-full rounded-lg bg-gradient-to-br from-neutral-900 to-black border ${cfg.border} border-opacity-40 shadow-lg flex items-center gap-2.5 px-3 relative overflow-hidden transition-all duration-300 group-hover:${cfg.border} group-hover:border-opacity-80 group-hover:shadow-xl`}
-        style={{ '--agent-color': 'currentColor' } as React.CSSProperties}
-      >
-        <div className={`absolute inset-0 ${cfg.bg} opacity-30 pointer-events-none`} />
-
-        <div className={`flex-shrink-0 w-9 h-9 rounded-lg ${cfg.bg} flex items-center justify-center border border-white/5`}>
-          <Icon className={`w-5 h-5 ${cfg.color}`} />
-        </div>
-
-        <div className="flex-1 min-w-0 z-10">
-          <p className="text-white font-semibold text-[11px] leading-tight truncate">{agent.name}</p>
-          <div className="flex items-center gap-1.5 mt-1">
-            <span className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[agent.status]?.dot || 'bg-gray-400'} ${agent.status === 'running' || simulationMode ? 'animate-pulse' : ''}`} />
-            <span className={`text-[9px] uppercase tracking-wider font-medium ${cfg.color}`}>{cfg.label}</span>
-          </div>
-          {agent.skills && agent.skills.length > 0 && (
-            <p className="text-[9px] text-gray-500 mt-0.5">{agent.skills.length} skills</p>
-          )}
-        </div>
-
-        {isActive && (
-          <motion.div
-            className="absolute top-1 right-1"
-            animate={{ opacity: [0.4, 1, 0.4] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
+      <div className="flex flex-col h-full p-3 relative z-10">
+        {/* Top Row: Icon + Name */}
+        <div className="flex items-center gap-2 min-w-0">
+          <IconComp size={16} style={{ color: catConfig.color }} className="shrink-0" />
+          <span
+            className="text-[13px] font-semibold text-white truncate flex-1"
+            style={{ fontFamily: '"Space Grotesk", sans-serif' }}
+            title={data.display_name}
           >
-            <Zap className="w-3 h-3 text-emerald-400" />
-          </motion.div>
-        )}
-      </div>
+            {data.display_name}
+          </span>
+          {/* Status dot */}
+          <span
+            className="w-2 h-2 rounded-full shrink-0"
+            style={{
+              backgroundColor: statusColors[data.status],
+              boxShadow: `0 0 4px ${statusColors[data.status]}`,
+            }}
+          />
+        </div>
 
-      <Handle type="target" position={Position.Top} className={`!w-2 !h-2 !border-2 !border-black ${cfg.dot ? '' : '!bg-gray-400'}`} style={{ backgroundColor: 'var(--handle-color)' }} />
-      <Handle type="source" position={Position.Bottom} className="!w-2 !h-2 !border-2 !border-black !bg-gray-400" />
+        {/* Category Badge */}
+        <div className="flex items-center gap-1.5 mt-1.5">
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded"
+            style={{
+              backgroundColor: catConfig.bg,
+              color: catConfig.color,
+              border: `1px solid ${catConfig.border}`,
+              fontFamily: '"IBM Plex Mono", monospace',
+            }}
+          >
+            {catConfig.label}
+          </span>
+        </div>
+
+        {/* Bottom Row: Metrics + Sparkline */}
+        <div className="flex items-end justify-between mt-auto pt-1.5">
+          <div className="text-[10px]" style={{ color: '#5E626A', fontFamily: '"IBM Plex Mono", monospace' }}>
+            <span style={{ color: '#A1A4AA' }}>T:{data.tasks}</span>
+            <span className="mx-1">|</span>
+            <span style={{ color: data.successRate > 95 ? '#36CFC9' : '#FFD166' }}>{data.successRate}%</span>
+          </div>
+          <MiniSparkline values={data.sparkline} color={catConfig.color} />
+        </div>
+      </div>
     </div>
   );
 }
 
-// ─── Edge Types ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// DETAIL PANEL
+// ═══════════════════════════════════════════════════════════════
 
-const nodeTypes: NodeTypes = {
-  brainNode: BrainNode,
-  metaNode: MetaNode,
-  agentNode: AgentNode,
-};
-
-// ─── Detail Panel ────────────────────────────────────────────────────────
-
+/**
+ * DetailPanel — v5.1 Enhanced with Execution Controls
+ * Shows agent details + prompt input + execution buttons
+ */
 function DetailPanel({
   agent,
-  tasks,
-  executions,
+  agentDef,
   onClose,
+  onStatusChange,
   onExecute,
-  onUpdateConfig,
+  isExecuting,
 }: {
-  agent: LoopAgent;
-  tasks: LoopAgentTask[];
-  executions: ExecutionRecord[];
+  agent: AgentState | null;
+  agentDef: AgentDef | null;
   onClose: () => void;
-  onExecute: (prompt: string, backend: string) => void;
-  onUpdateConfig: (config: Record<string, unknown>) => void;
+  onStatusChange: (skillKey: string, status: AgentStatus) => void;
+  onExecute: (agent: AgentState, prompt: string, backend: ExecutionBackend) => void;
+  isExecuting: boolean;
 }) {
-  const [execPrompt, setExecPrompt] = useState('');
-  const [execBackend, setExecBackend] = useState('kimi_meta');
-  const [localConfig, setLocalConfig] = useState(JSON.stringify(agent.config || {}, null, 2));
-  const [configError, setConfigError] = useState('');
-  const cfg = AGENT_TYPE_CONFIG[agent.agent_type] || AGENT_TYPE_CONFIG.worker;
+  const [prompt, setPrompt] = useState('');
 
-  const handleConfigSave = () => {
-    try {
-      const parsed = JSON.parse(localConfig);
-      setConfigError('');
-      onUpdateConfig(parsed);
-    } catch {
-      setConfigError('Invalid JSON format');
-    }
-  };
+  if (!agent || !agentDef) return null;
 
-  const handleExecute = (backend: string) => {
-    if (!execPrompt.trim()) return;
-    onExecute(execPrompt, backend);
-  };
+  const isMetaAgent = agent.skill_key === 'kimi-meta';
+  const catConfig = CATEGORY_CONFIG[agentDef.category] || CATEGORY_CONFIG.operations_memory;
+  const IconComp = ICON_MAP[agentDef.icon] || Bot;
+  const canExecute = prompt.trim().length > 0 && !isExecuting;
 
   return (
     <motion.div
-      initial={{ x: 480, opacity: 0 }}
+      initial={{ x: 380, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
-      exit={{ x: 480, opacity: 0 }}
+      exit={{ x: 380, opacity: 0 }}
       transition={{ type: 'spring', damping: 25, stiffness: 250 }}
-      className="absolute top-0 right-0 w-[440px] h-full bg-neutral-950/95 backdrop-blur-xl border-l border-white/10 shadow-2xl z-50 flex flex-col"
+      className="fixed right-0 top-0 h-full w-[420px] z-30 flex flex-col border-l"
+      style={{
+        backgroundColor: 'rgba(12,13,15,0.95)',
+        backdropFilter: 'blur(24px)',
+        borderColor: 'rgba(255,255,255,0.06)',
+        marginTop: 0,
+      }}
     >
       {/* Header */}
-      <div className="flex items-start justify-between p-5 border-b border-white/10">
-        <div className="flex items-center gap-3">
-          <div className={`w-11 h-11 rounded-xl ${cfg.bg} flex items-center justify-center border border-white/10`}>
-            <cfg.icon className={`w-6 h-6 ${cfg.color}`} />
+      <div
+        className="h-14 flex items-center justify-between px-5 border-b shrink-0"
+        style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold" style={{ color: '#A1A4AA' }}>
+            {isMetaAgent ? 'Kimi Meta Agent' : 'Agent Details'}
+          </span>
+          {isMetaAgent && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded animate-pulse"
+              style={{ background: 'rgba(245,197,66,0.2)', color: '#F5C542', fontFamily: '"IBM Plex Mono", monospace' }}>
+              META
+            </span>
+          )}
+        </div>
+        <button
+          onClick={onClose}
+          className="h-8 w-8 flex items-center justify-center rounded-lg transition-colors"
+          style={{ color: '#5E626A' }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = '#141518';
+            e.currentTarget.style.color = '#FFFFFF';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = 'transparent';
+            e.currentTarget.style.color = '#5E626A';
+          }}
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-5 space-y-5">
+        {/* Agent Header */}
+        <div className="flex items-start gap-3">
+          <div
+            className="h-12 w-12 rounded-xl flex items-center justify-center shrink-0"
+            style={{
+              background: isMetaAgent
+                ? 'linear-gradient(135deg, #F5C542, #FF8C5A)'
+                : catConfig.bg,
+              border: `1px solid ${isMetaAgent ? 'rgba(245,197,66,0.5)' : catConfig.border}`,
+            }}
+          >
+            {isMetaAgent ? <Crown size={24} color="#000" /> : <IconComp size={24} style={{ color: catConfig.color }} />}
           </div>
-          <div>
-            <h2 className="text-white font-bold text-lg leading-tight">{agent.name}</h2>
+          <div className="flex-1 min-w-0">
+            <h3 className="text-base font-bold truncate" style={{
+              color: isMetaAgent ? '#F5C542' : '#FFFFFF',
+              fontFamily: '"Space Grotesk", sans-serif',
+            }}>
+              {agentDef.display_name}
+            </h3>
             <div className="flex items-center gap-2 mt-1">
-              <TypeBadge type={agent.agent_type} />
-              <StatusBadge status={agent.status} />
+              <span
+                className="text-[10px] px-1.5 py-0.5 rounded"
+                style={{
+                  backgroundColor: isMetaAgent ? 'rgba(245,197,66,0.15)' : catConfig.bg,
+                  color: isMetaAgent ? '#F5C542' : catConfig.color,
+                  border: `1px solid ${isMetaAgent ? 'rgba(245,197,66,0.3)' : catConfig.border}`,
+                  fontFamily: '"IBM Plex Mono", monospace',
+                }}
+              >
+                {isMetaAgent ? 'Meta Orchestrator' : catConfig.label}
+              </span>
+              <StatusDot status={agent.status} />
+              {isExecuting && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded animate-pulse"
+                  style={{ background: 'rgba(255,140,90,0.2)', color: '#FF8C5A' }}>
+                  RUNNING
+                </span>
+              )}
             </div>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          className="text-gray-400 hover:text-white hover:bg-white/10 rounded-lg"
-        >
-          <X className="w-5 h-5" />
-        </Button>
-      </div>
 
-      {/* Tabs */}
-      <Tabs defaultValue="overview" className="flex-1 flex flex-col overflow-hidden">
-        <TabsList className="mx-5 mt-4 bg-white/5 border border-white/10 p-1 rounded-lg h-auto">
-          <TabsTrigger value="overview" className="text-xs data-[state=active]:bg-orange-500 data-[state=active]:text-white rounded-md px-3 py-1.5">
-            <Activity className="w-3.5 h-3.5 mr-1.5" /> Overview
-          </TabsTrigger>
-          <TabsTrigger value="tasks" className="text-xs data-[state=active]:bg-orange-500 data-[state=active]:text-white rounded-md px-3 py-1.5">
-            <ListTodo className="w-3.5 h-3.5 mr-1.5" /> Tasks
-          </TabsTrigger>
-          <TabsTrigger value="execution" className="text-xs data-[state=active]:bg-orange-500 data-[state=active]:text-white rounded-md px-3 py-1.5">
-            <Terminal className="w-3.5 h-3.5 mr-1.5" /> Execution
-          </TabsTrigger>
-          <TabsTrigger value="config" className="text-xs data-[state=active]:bg-orange-500 data-[state=active]:text-white rounded-md px-3 py-1.5">
-            <Settings className="w-3.5 h-3.5 mr-1.5" /> Config
-          </TabsTrigger>
-        </TabsList>
+        {/* Description */}
+        <div>
+          <label className="text-[10px] uppercase tracking-wider font-medium mb-1.5 block" style={{ color: '#5E626A' }}>
+            Beschreibung
+          </label>
+          <p className="text-[13px] leading-relaxed" style={{ color: '#A1A4AA' }}>
+            {agentDef.description}
+          </p>
+        </div>
 
-        <ScrollArea className="flex-1">
-          {/* ── Overview Tab ── */}
-          <TabsContent value="overview" className="m-0 px-5 py-4 space-y-4">
-            <div className="space-y-1">
-              <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Description</label>
-              <p className="text-gray-300 text-sm leading-relaxed">{agent.description || 'No description available.'}</p>
-            </div>
+        {/* ═══ v5.1: PROMPT INPUT + EXECUTION ═══ */}
+        <div>
+          <label className="text-[10px] uppercase tracking-wider font-medium mb-1.5 block" style={{ color: '#5E626A' }}>
+            Aufgabe / Prompt
+          </label>
+          <div className="relative">
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={isMetaAgent
+                ? 'Gib eine komplexe Aufgabe ein, die Kimi delegiert...'
+                : 'Gib eine Aufgabe fuer diesen Agent ein...'}
+              className="w-full h-24 rounded-xl p-3 pr-10 text-[12px] resize-none focus:outline-none focus:ring-1 focus:ring-[#FF8C5A]"
+              style={{
+                backgroundColor: '#141518',
+                border: '1px solid rgba(255,255,255,0.08)',
+                color: '#FFFFFF',
+                fontFamily: '"IBM Plex Mono", monospace',
+              }}
+            />
+            <button
+              onClick={() => setPrompt('')}
+              className="absolute top-2 right-2 p-1 rounded"
+              style={{ color: '#5E626A' }}
+            >
+              <X size={12} />
+            </button>
+          </div>
 
-            <Separator className="bg-white/10" />
+          {/* Execution Buttons */}
+          <div className="mt-3 space-y-2">
+            {/* Kimi Meta Button (always shown, highlighted for meta agent) */}
+            <button
+              onClick={() => {
+                if (canExecute) onExecute(agent, prompt, 'kimi_meta');
+              }}
+              disabled={!canExecute}
+              className="w-full flex items-center justify-center gap-2 h-10 rounded-lg text-xs font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                background: 'linear-gradient(135deg, rgba(245,197,66,0.2), rgba(255,140,90,0.2))',
+                color: '#F5C542',
+                border: '1px solid rgba(245,197,66,0.4)',
+              }}
+              onMouseEnter={(e) => {
+                if (canExecute) {
+                  e.currentTarget.style.background = 'linear-gradient(135deg, rgba(245,197,66,0.3), rgba(255,140,90,0.3))';
+                }
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(245,197,66,0.2), rgba(255,140,90,0.2))';
+              }}
+            >
+              <Crown size={14} />
+              {isExecuting ? 'Wird ausgefuehrt...' : 'Mit Kimi (Meta Agent) ausfuehren'}
+            </button>
 
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Skills</label>
-              <div className="flex flex-wrap gap-1.5">
-                {agent.skills?.map((skill) => (
-                  <Badge key={skill} variant="outline" className="bg-white/5 text-gray-300 border-white/10 text-[10px] font-medium px-2 py-0.5">
-                    {skill}
-                  </Badge>
-                )) || <span className="text-gray-500 text-xs">No skills defined</span>}
+            {/* Simulation Button */}
+            <button
+              onClick={() => {
+                if (canExecute) onExecute(agent, prompt, 'simulation');
+              }}
+              disabled={!canExecute}
+              className="w-full flex items-center justify-center gap-2 h-9 rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{
+                backgroundColor: 'rgba(54,207,201,0.1)',
+                color: '#36CFC9',
+                border: '1px solid rgba(54,207,201,0.25)',
+              }}
+              onMouseEnter={(e) => {
+                if (canExecute) e.currentTarget.style.backgroundColor = 'rgba(54,207,201,0.2)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'rgba(54,207,201,0.1)';
+              }}
+            >
+              <Terminal size={14} />
+              Simulation (Lokal)
+            </button>
+
+            {/* Hermes Button (placeholder for v5.2) */}
+            <button
+              disabled={true}
+              className="w-full flex items-center justify-center gap-2 h-9 rounded-lg text-xs font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              style={{
+                backgroundColor: 'rgba(185,139,255,0.08)',
+                color: '#B98BFF',
+                border: '1px solid rgba(185,139,255,0.15)',
+              }}
+              title="Verfuegbar in v5.2 — Hermes/OpenClaw Integration"
+            >
+              <Server size={14} />
+              Hermes/OpenClaw + Qwen (v5.2)
+            </button>
+          </div>
+        </div>
+
+        {/* Status Selector */}
+        <div>
+          <label className="text-[10px] uppercase tracking-wider font-medium mb-1.5 block" style={{ color: '#5E626A' }}>
+            Status
+          </label>
+          <div className="grid grid-cols-4 gap-1.5">
+            {(['active', 'idle', 'paused', 'error'] as AgentStatus[]).map((s) => (
+              <button
+                key={s}
+                onClick={() => onStatusChange(agent.skill_key, s)}
+                className="px-2 py-1.5 rounded-lg text-[10px] font-medium transition-all capitalize"
+                style={{
+                  backgroundColor: agent.status === s ? (isMetaAgent ? 'rgba(245,197,66,0.2)' : catConfig.bg) : '#1B1D20',
+                  color: agent.status === s ? (isMetaAgent ? '#F5C542' : catConfig.color) : '#5E626A',
+                  border: `1px solid ${agent.status === s ? (isMetaAgent ? 'rgba(245,197,66,0.4)' : catConfig.border) : 'rgba(255,255,255,0.06)'}`,
+                  fontFamily: '"IBM Plex Mono", monospace',
+                }}
+              >
+                {s === 'active' ? 'Aktiv' : s === 'idle' ? 'Idle' : s === 'paused' ? 'Pause' : 'Fehler'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Metrics Cards */}
+        <div>
+          <label className="text-[10px] uppercase tracking-wider font-medium mb-2 block" style={{ color: '#5E626A' }}>
+            Metriken
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { label: 'Tasks', value: agent.tasks, color: isMetaAgent ? '#F5C542' : '#FF8C5A' },
+              { label: 'Success', value: `${agent.successRate}%`, color: '#36CFC9' },
+              { label: 'Letzte', value: agent.lastActive, color: '#B98BFF', isTime: true },
+            ].map((m) => (
+              <div key={m.label}
+                className="p-3 rounded-xl"
+                style={{ backgroundColor: '#141518', border: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <div className="text-[10px] mb-1" style={{ color: '#5E626A' }}>{m.label}</div>
+                <div className={m.isTime ? 'text-[11px] font-semibold mt-1.5' : 'text-lg font-bold'}
+                  style={{ color: m.color, fontFamily: m.isTime ? '"IBM Plex Mono", monospace' : '"Space Grotesk", sans-serif' }}>
+                  {m.value}
+                </div>
               </div>
-            </div>
+            ))}
+          </div>
+        </div>
 
-            <Separator className="bg-white/10" />
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white/5 rounded-lg p-3 border border-white/5">
-                <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Tier Required</label>
-                <p className="text-white font-bold text-lg mt-1">{agent.tier_required ?? '-'}</p>
-              </div>
-              <div className="bg-white/5 rounded-lg p-3 border border-white/5">
-                <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Max Concurrent</label>
-                <p className="text-white font-bold text-lg mt-1">{agent.max_concurrent_tasks ?? '-'}</p>
-              </div>
-              <div className="bg-white/5 rounded-lg p-3 border border-white/5">
-                <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Status</label>
-                <div className="mt-1"><StatusBadge status={agent.status} /></div>
-              </div>
-              <div className="bg-white/5 rounded-lg p-3 border border-white/5">
-                <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">ID</label>
-                <p className="text-gray-400 font-mono text-[10px] mt-1 truncate">{agent.id}</p>
-              </div>
-            </div>
-
-            <div className="bg-white/5 rounded-lg p-3 border border-white/5">
-              <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Uptime / Last Active</label>
-              <p className="text-gray-300 text-xs mt-1">
-                {agent.updated_at ? new Date(agent.updated_at).toLocaleString() : 'Never'}
-              </p>
-            </div>
-          </TabsContent>
-
-          {/* ── Tasks Tab ── */}
-          <TabsContent value="tasks" className="m-0 px-5 py-4">
-            {tasks.length === 0 ? (
-              <div className="text-center py-12">
-                <ListTodo className="w-10 h-10 text-gray-600 mx-auto mb-3" />
-                <p className="text-gray-500 text-sm">No tasks assigned</p>
-              </div>
+        {/* Activity Log */}
+        <div>
+          <label className="text-[10px] uppercase tracking-wider font-medium mb-2 block" style={{ color: '#5E626A' }}>
+            Aktivitätslog
+          </label>
+          <div
+            className="rounded-xl p-3 space-y-2 max-h-40 overflow-y-auto"
+            style={{ backgroundColor: '#141518', border: '1px solid rgba(255,255,255,0.06)' }}
+          >
+            {agent.activityLog.length === 0 ? (
+              <span className="text-[11px]" style={{ color: '#5E626A' }}>Keine Aktivitaeten</span>
             ) : (
-              <div className="space-y-2">
-                {tasks.map((task) => (
-                  <div key={task.id} className="bg-white/5 rounded-lg p-3 border border-white/5 hover:border-white/10 transition-colors">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className="text-white font-medium text-sm flex-1 leading-tight">{task.title}</p>
-                      <TaskStatusBadge status={task.status} />
-                    </div>
-                    {task.description && (
-                      <p className="text-gray-500 text-xs mt-1.5 line-clamp-2">{task.description}</p>
-                    )}
-                    <div className="flex items-center gap-2 mt-2">
-                      <Badge variant="outline" className={`text-[9px] ${PRIORITY_COLORS[task.priority] || PRIORITY_COLORS.medium} border px-1.5 py-0`}>
-                        {task.priority}
-                      </Badge>
-                      {task.backend && (
-                        <span className="text-[9px] text-gray-500 flex items-center gap-1">
-                          <Cpu className="w-3 h-3" /> {task.backend}
-                        </span>
-                      )}
-                      {task.created_at && (
-                        <span className="text-[9px] text-gray-600 flex items-center gap-1 ml-auto">
-                          <Clock className="w-3 h-3" /> {new Date(task.created_at).toLocaleDateString()}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+              agent.activityLog.map((entry, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <ChevronRight size={10} className="mt-0.5 shrink-0" style={{ color: isMetaAgent ? '#F5C542' : catConfig.color }} />
+                  <span className="text-[11px]" style={{ color: '#A1A4AA', fontFamily: '"IBM Plex Mono", monospace' }}>
+                    {entry}
+                  </span>
+                </div>
+              ))
             )}
-          </TabsContent>
+          </div>
+        </div>
 
-          {/* ── Execution Tab ── */}
-          <TabsContent value="execution" className="m-0 px-5 py-4 space-y-4">
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Execution Instructions</label>
-              <Textarea
-                value={execPrompt}
-                onChange={(e) => setExecPrompt(e.target.value)}
-                placeholder="Enter execution instructions for this agent..."
-                className="bg-white/5 border-white/10 text-white placeholder:text-gray-600 text-sm min-h-[100px] resize-none focus:border-orange-500/50 focus:ring-orange-500/20"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Backend</label>
-              <select
-                value={execBackend}
-                onChange={(e) => setExecBackend(e.target.value)}
-                className="w-full bg-white/5 border border-white/10 text-white text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-orange-500/50"
-              >
-                <option value="kimi_meta">Kimi Meta Agent</option>
-                <option value="hermes_openclaw">Hermes / OpenClaw</option>
-                <option value="simulation">Simulation</option>
-              </select>
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                onClick={() => handleExecute('kimi_meta')}
-                className="flex-1 bg-gradient-to-r from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 text-black font-semibold text-xs h-9"
-              >
-                <Crown className="w-3.5 h-3.5 mr-1.5" /> Execute via Kimi Meta
-              </Button>
-              <Button
-                onClick={() => handleExecute('simulation')}
-                variant="outline"
-                className="flex-1 border-white/10 text-gray-300 hover:bg-white/5 hover:text-white text-xs h-9"
-              >
-                <Bot className="w-3.5 h-3.5 mr-1.5" /> Simulate
-              </Button>
-              <Button
-                onClick={() => handleExecute('hermes_openclaw')}
-                className="flex-1 bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-400 hover:to-red-400 text-white font-semibold text-xs h-9"
-              >
-                <Brain className="w-3.5 h-3.5 mr-1.5" /> Hermes / OpenClaw
-              </Button>
-            </div>
-
-            <Separator className="bg-white/10" />
-
-            {/* Execution History */}
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Execution History</label>
-              {executions.length === 0 ? (
-                <div className="text-center py-8">
-                  <Terminal className="w-8 h-8 text-gray-600 mx-auto mb-2" />
-                  <p className="text-gray-500 text-xs">No executions yet</p>
-                </div>
-              ) : (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                  {executions.map((exec) => (
-                    <div key={exec.id} className="bg-white/5 rounded-lg p-3 border border-white/5">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <ExecStatusIcon status={exec.status} />
-                          <span className="text-white text-xs font-medium">{exec.backend}</span>
-                        </div>
-                        <span className="text-gray-600 text-[10px]">{new Date(exec.timestamp).toLocaleTimeString()}</span>
-                      </div>
-                      <p className="text-gray-400 text-xs mt-1.5 truncate">{exec.prompt}</p>
-                      {exec.result && (
-                        <div className="mt-2 bg-black/30 rounded p-2 border border-white/5">
-                          <p className="text-gray-500 text-[10px] font-mono line-clamp-3">{exec.result}</p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </TabsContent>
-
-          {/* ── Config Tab ── */}
-          <TabsContent value="config" className="m-0 px-5 py-4 space-y-4">
-            <div className="space-y-2">
-              <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Agent Config (JSON)</label>
-              <Textarea
-                value={localConfig}
-                onChange={(e) => setLocalConfig(e.target.value)}
-                className="bg-black/40 border-white/10 text-green-400 font-mono text-xs min-h-[200px] resize-none focus:border-orange-500/50 focus:ring-orange-500/20"
-                spellCheck={false}
-              />
-              {configError && (
-                <p className="text-red-400 text-xs flex items-center gap-1">
-                  <AlertTriangle className="w-3 h-3" /> {configError}
-                </p>
-              )}
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Max Concurrent Tasks</label>
-                <input
-                  type="range"
-                  min={1}
-                  max={20}
-                  value={agent.max_concurrent_tasks || 1}
-                  readOnly
-                  className="w-full accent-orange-500"
-                />
-                <p className="text-white text-xs font-mono">{agent.max_concurrent_tasks}</p>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] uppercase tracking-widest text-gray-500 font-semibold">Tier Required</label>
-                <div className="flex items-center gap-2">
-                  {[1, 2, 3].map((t) => (
-                    <div
-                      key={t}
-                      className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold border ${agent.tier_required === t ? 'bg-orange-500 text-white border-orange-500' : 'bg-white/5 text-gray-500 border-white/10'}`}
-                    >
-                      {t}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <Button onClick={handleConfigSave} className="flex-1 bg-orange-500 hover:bg-orange-400 text-white text-xs h-9">
-                <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Save Config
-              </Button>
-              <Button
-                onClick={() => setLocalConfig(JSON.stringify(agent.config || {}, null, 2))}
-                variant="outline"
-                className="flex-1 border-white/10 text-gray-300 hover:bg-white/5 text-xs h-9"
-              >
-                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Reset
-              </Button>
-            </div>
-          </TabsContent>
-        </ScrollArea>
-      </Tabs>
+        {/* Config Editor */}
+        <div>
+          <label className="text-[10px] uppercase tracking-wider font-medium mb-2 block" style={{ color: '#5E626A' }}>
+            Konfiguration
+          </label>
+          <textarea
+            className="w-full h-24 rounded-xl p-3 text-[11px] resize-none focus:outline-none focus:ring-1 focus:ring-[#FF8C5A]"
+            style={{
+              backgroundColor: '#141518',
+              border: '1px solid rgba(255,255,255,0.06)',
+              color: '#A1A4AA',
+              fontFamily: '"IBM Plex Mono", monospace',
+            }}
+            defaultValue={JSON.stringify(agent.config, null, 2)}
+            readOnly
+          />
+        </div>
+      </div>
     </motion.div>
   );
 }
 
-function TaskStatusBadge({ status }: { status: string }) {
-  if (status === 'paused_awaiting_confirmation') {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-        <AlertTriangle className="w-3 h-3" /> Needs Confirm
-      </span>
-    );
-  }
-  const colors: Record<string, string> = {
-    pending: 'bg-gray-500/20 text-gray-400 border-gray-500/30',
-    running: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-    completed: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-    failed: 'bg-red-500/20 text-red-400 border-red-500/30',
-  };
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase border ${colors[status] || colors.pending}`}>
-      {status}
-    </span>
-  );
-}
+// ═══════════════════════════════════════════════════════════════
+// SPAWN MODAL
+// ═══════════════════════════════════════════════════════════════
 
-function ExecStatusIcon({ status }: { status: string }) {
-  switch (status) {
-    case 'completed': return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
-    case 'failed': return <AlertTriangle className="w-3.5 h-3.5 text-red-400" />;
-    case 'running': return <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" />;
-    default: return <Clock className="w-3.5 h-3.5 text-gray-500" />;
-  }
-}
-
-// ─── Toolbar ─────────────────────────────────────────────────────────────
-
-function CanvasToolbar({
-  simulationMode,
-  onToggleSimulation,
-  onResetLayout,
-  onAutoArrange,
-  statusFilter,
-  onStatusFilterChange,
-  onAddAgent,
+function SpawnModal({
+  open,
+  onClose,
+  onSpawn,
+  spawnedKeys,
 }: {
-  simulationMode: boolean;
-  onToggleSimulation: () => void;
-  onResetLayout: () => void;
-  onAutoArrange: () => void;
-  statusFilter: string;
-  onStatusFilterChange: (filter: string) => void;
-  onAddAgent: () => void;
+  open: boolean;
+  onClose: () => void;
+  onSpawn: (agent: AgentDef) => void;
+  spawnedKeys: string[];
 }) {
-  const filters = ['all', 'running', 'idle', 'error'];
+  if (!open) return null;
+
+  const [filterCat, setFilterCat] = useState<string>('all');
+  const [search, setSearch] = useState('');
+
+  const categories = ['all', ...new Set(AGENT_REGISTRY.map((a) => a.category))];
+
+  const filtered = AGENT_REGISTRY.filter((a) => {
+    if (a.category === 'core_orchestrator') return false; // can't spawn mainbrain
+    if (spawnedKeys.includes(a.skill_key)) return false;
+    if (filterCat !== 'all' && a.category !== filterCat) return false;
+    if (search && !a.display_name.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
 
   return (
-    <Panel position="top-center" className="m-0 p-0">
-      <motion.div
-        initial={{ y: -40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.2 }}
-        className="flex items-center gap-2 bg-neutral-950/90 backdrop-blur-xl border border-white/10 rounded-xl px-3 py-2 shadow-2xl mt-3"
-      >
-        <Button
-          onClick={onAddAgent}
-          className="bg-orange-500 hover:bg-orange-400 text-white text-xs h-8 px-3 gap-1.5"
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)' }}
+          onClick={onClose}
         >
-          <Plus className="w-3.5 h-3.5" /> Add Agent
-        </Button>
-
-        <Separator orientation="vertical" className="h-5 bg-white/10" />
-
-        <Button
-          onClick={onToggleSimulation}
-          variant={simulationMode ? 'default' : 'outline'}
-          className={`text-xs h-8 px-3 gap-1.5 ${simulationMode ? 'bg-gradient-to-r from-purple-500 to-indigo-500 text-white border-0' : 'border-white/10 text-gray-300 hover:bg-white/5'}`}
-        >
-          <Sparkles className="w-3.5 h-3.5" />
-          {simulationMode ? 'Simulating...' : 'Simulation'}
-        </Button>
-
-        <Button
-          onClick={onResetLayout}
-          variant="outline"
-          className="border-white/10 text-gray-300 hover:bg-white/5 text-xs h-8 px-3 gap-1.5"
-        >
-          <RotateCcw className="w-3.5 h-3.5" /> Reset
-        </Button>
-
-        <Button
-          onClick={onAutoArrange}
-          variant="outline"
-          className="border-white/10 text-gray-300 hover:bg-white/5 text-xs h-8 px-3 gap-1.5"
-        >
-          <LayoutGrid className="w-3.5 h-3.5" /> Arrange
-        </Button>
-
-        <Separator orientation="vertical" className="h-5 bg-white/10" />
-
-        <div className="flex items-center gap-1">
-          <Filter className="w-3.5 h-3.5 text-gray-500 mr-1" />
-          {filters.map((f) => (
-            <button
-              key={f}
-              onClick={() => onStatusFilterChange(f)}
-              className={`px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-all ${statusFilter === f ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-gray-300'}`}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-      </motion.div>
-    </Panel>
-  );
-}
-
-// ─── Status Bar ──────────────────────────────────────────────────────────
-
-function StatusBar({
-  agents,
-  connected,
-  lastUpdated,
-}: {
-  agents: LoopAgent[];
-  connected: boolean;
-  lastUpdated: string;
-}) {
-  const counts = useMemo(() => {
-    const total = agents.length;
-    const running = agents.filter((a) => a.status === 'running').length;
-    const idle = agents.filter((a) => a.status === 'idle').length;
-    const error = agents.filter((a) => a.status === 'error').length;
-    return { total, running, idle, error };
-  }, [agents]);
-
-  return (
-    <Panel position="bottom-center" className="m-0 p-0">
-      <motion.div
-        initial={{ y: 40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 0.3 }}
-        className="flex items-center gap-4 bg-neutral-950/90 backdrop-blur-xl border border-white/10 rounded-xl px-4 py-2 shadow-2xl mb-3"
-      >
-        <div className="flex items-center gap-1.5">
-          <Bot className="w-3.5 h-3.5 text-gray-400" />
-          <span className="text-gray-500 text-[10px] uppercase tracking-wider font-semibold">Total</span>
-          <span className="text-white text-xs font-bold ml-1">{counts.total}</span>
-        </div>
-        <Separator orientation="vertical" className="h-4 bg-white/10" />
-        <div className="flex items-center gap-1.5">
-          <CircleDot className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="text-gray-500 text-[10px] uppercase tracking-wider font-semibold">Running</span>
-          <span className="text-emerald-400 text-xs font-bold ml-1">{counts.running}</span>
-        </div>
-        <Separator orientation="vertical" className="h-4 bg-white/10" />
-        <div className="flex items-center gap-1.5">
-          <Circle className="w-3.5 h-3.5 text-gray-400" />
-          <span className="text-gray-500 text-[10px] uppercase tracking-wider font-semibold">Idle</span>
-          <span className="text-gray-400 text-xs font-bold ml-1">{counts.idle}</span>
-        </div>
-        <Separator orientation="vertical" className="h-4 bg-white/10" />
-        <div className="flex items-center gap-1.5">
-          <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
-          <span className="text-gray-500 text-[10px] uppercase tracking-wider font-semibold">Error</span>
-          <span className="text-red-400 text-xs font-bold ml-1">{counts.error}</span>
-        </div>
-        <Separator orientation="vertical" className="h-4 bg-white/10" />
-        <div className="flex items-center gap-1.5">
-          <Clock className="w-3.5 h-3.5 text-gray-500" />
-          <span className="text-gray-600 text-[10px]">{lastUpdated}</span>
-        </div>
-        <Separator orientation="vertical" className="h-4 bg-white/10" />
-        <div className="flex items-center gap-1.5">
-          {connected ? (
-            <>
-              <Wifi className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-emerald-400 text-[10px] font-semibold">Live</span>
-            </>
-          ) : (
-            <>
-              <WifiOff className="w-3.5 h-3.5 text-red-400" />
-              <span className="text-red-400 text-[10px] font-semibold">Offline</span>
-            </>
-          )}
-        </div>
-      </motion.div>
-    </Panel>
-  );
-}
-
-// ─── Simulation Log Panel ────────────────────────────────────────────────
-
-function SimulationLog({ logs }: { logs: string[] }) {
-  return (
-    <Panel position="bottom-left" className="m-0 p-0">
-      <motion.div
-        initial={{ y: 40, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        className="w-[320px] bg-neutral-950/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-2xl mb-3 ml-3 overflow-hidden"
-      >
-        <div className="flex items-center gap-2 px-3 py-2 border-b border-white/10">
-          <Activity className="w-3.5 h-3.5 text-purple-400" />
-          <span className="text-white text-xs font-semibold">Simulation Log</span>
           <motion.div
-            className="w-1.5 h-1.5 rounded-full bg-purple-400"
-            animate={{ opacity: [1, 0.3, 1] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-          />
-        </div>
-        <ScrollArea className="h-[140px] px-3 py-2">
-          <div className="space-y-1">
-            {logs.length === 0 && (
-              <p className="text-gray-600 text-[10px]">Waiting for simulation events...</p>
-            )}
-            {logs.map((log, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="text-[10px] font-mono text-gray-400 leading-relaxed"
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            className="w-[560px] max-h-[600px] rounded-2xl flex flex-col overflow-hidden"
+            style={{
+              backgroundColor: '#0C0D0F',
+              border: '1px solid rgba(255,255,255,0.08)',
+              boxShadow: '0 24px 48px rgba(0,0,0,0.5)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div
+              className="h-14 flex items-center justify-between px-5 border-b shrink-0"
+              style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+            >
+              <div className="flex items-center gap-2">
+                <Plus size={18} style={{ color: '#FF8C5A' }} />
+                <span className="text-sm font-bold text-white" style={{ fontFamily: '"Space Grotesk", sans-serif' }}>
+                  Agent spawnen
+                </span>
+                <span className="text-[11px] ml-1" style={{ color: '#5E626A' }}>
+                  ({filtered.length} verfügbar)
+                </span>
+              </div>
+              <button
+                onClick={onClose}
+                className="h-8 w-8 flex items-center justify-center rounded-lg transition-colors"
+                style={{ color: '#5E626A' }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#141518';
+                  e.currentTarget.style.color = '#FFFFFF';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = '#5E626A';
+                }}
               >
-                <span className="text-gray-600">[{new Date().toLocaleTimeString()}]</span> {log}
-              </motion.div>
-            ))}
-          </div>
-        </ScrollArea>
-      </motion.div>
-    </Panel>
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Search + Filter */}
+            <div className="p-4 space-y-3">
+              <div
+                className="flex items-center gap-2 h-9 px-3 rounded-lg"
+                style={{ backgroundColor: '#1B1D20', border: '1px solid rgba(255,255,255,0.06)' }}
+              >
+                <SearchIcon size={14} style={{ color: '#5E626A' }} />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Agent suchen..."
+                  className="flex-1 bg-transparent text-xs text-white placeholder:text-[#5E626A] focus:outline-none"
+                  style={{ fontFamily: '"DM Sans", sans-serif' }}
+                />
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {categories.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setFilterCat(cat)}
+                    className="px-2.5 py-1 rounded-md text-[10px] font-medium transition-all"
+                    style={{
+                      backgroundColor: filterCat === cat ? 'rgba(255,140,90,0.15)' : '#1B1D20',
+                      color: filterCat === cat ? '#FF8C5A' : '#5E626A',
+                      border: `1px solid ${filterCat === cat ? 'rgba(255,140,90,0.3)' : 'rgba(255,255,255,0.06)'}`,
+                      fontFamily: '"IBM Plex Mono", monospace',
+                    }}
+                  >
+                    {cat === 'all' ? 'Alle' : CATEGORY_CONFIG[cat]?.label || cat}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Agent List */}
+            <div className="flex-1 overflow-y-auto px-4 pb-4 space-y-2">
+              {filtered.map((agent) => {
+                const catCfg = CATEGORY_CONFIG[agent.category] || CATEGORY_CONFIG.operations_memory;
+                const AIcon = ICON_MAP[agent.icon] || Bot;
+                return (
+                  <button
+                    key={agent.skill_key}
+                    onClick={() => {
+                      onSpawn(agent);
+                      onClose();
+                    }}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl transition-all text-left group"
+                    style={{
+                      backgroundColor: '#141518',
+                      border: '1px solid rgba(255,255,255,0.04)',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = '#1B1D20';
+                      e.currentTarget.style.borderColor = catCfg.border;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = '#141518';
+                      e.currentTarget.style.borderColor = 'rgba(255,255,255,0.04)';
+                    }}
+                  >
+                    <div
+                      className="h-9 w-9 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: catCfg.bg, border: `1px solid ${catCfg.border}` }}
+                    >
+                      <AIcon size={16} style={{ color: catCfg.color }} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[13px] font-semibold text-white truncate">
+                        {agent.display_name}
+                      </div>
+                      <div className="text-[11px] mt-0.5 truncate" style={{ color: '#5E626A' }}>
+                        {agent.description}
+                      </div>
+                    </div>
+                    <Plus
+                      size={14}
+                      className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      style={{ color: catCfg.color }}
+                    />
+                  </button>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="text-center py-8 text-[13px]" style={{ color: '#5E626A' }}>
+                  Keine Agenten verfügbar
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
 
-// ─── Main Canvas Component ───────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+// TOAST NOTIFICATION
+// ═══════════════════════════════════════════════════════════════
 
-function AgentCanvas() {
-  const { fitView, setViewport } = useReactFlow();
-  const [agents, setAgents] = useState<LoopAgent[]>([]);
-  const [tasks, setTasks] = useState<LoopAgentTask[]>([]);
-  const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
-  const [selectedAgent, setSelectedAgent] = useState<LoopAgent | null>(null);
-  const [simulationMode, setSimulationMode] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [simulationLogs, setSimulationLogs] = useState<string[]>([]);
-  const [connected, setConnected] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState('--:--:--');
-  const simIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const logEndRef = useRef<HTMLDivElement>(null);
+function Toast({ message, onClose }: { message: string; onClose: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 3000);
+    return () => clearTimeout(t);
+  }, [onClose]);
 
-  const initialNodes = useMemo<Node[]>(() => {
-    const filtered = statusFilter === 'all' ? agents : agents.filter((a) => a.status === statusFilter);
-    return filtered.map((agent) => {
-      const type = agent.agent_type === 'brain' ? 'brainNode' : agent.agent_type === 'meta' ? 'metaNode' : 'agentNode';
-      let position = { x: 0, y: 0 };
-      switch (agent.agent_type) {
-        case 'brain': position = { x: 400, y: 100 }; break;
-        case 'meta': position = { x: 100, y: 300 }; break;
-        case 'trader': position = { x: 700, y: 250 }; break;
-        case 'designer': position = { x: 700, y: 400 }; break;
-        case 'developer': position = { x: 450, y: 500 }; break;
-        case 'researcher': position = { x: 200, y: 500 }; break;
-        case 'deploy': position = { x: 600, y: 650 }; break;
-        case 'worker': position = { x: 350, y: 700 }; break;
-        default: position = { x: Math.random() * 600 + 100, y: Math.random() * 500 + 200 };
-      }
+  return (
+    <motion.div
+      initial={{ y: 50, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: 50, opacity: 0 }}
+      className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[60] px-4 py-2.5 rounded-xl flex items-center gap-2"
+      style={{
+        backgroundColor: 'rgba(12,13,15,0.95)',
+        backdropFilter: 'blur(12px)',
+        border: '1px solid rgba(54,207,201,0.3)',
+        boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+      }}
+    >
+      <Activity size={14} style={{ color: '#36CFC9' }} />
+      <span className="text-[12px]" style={{ color: '#A1A4AA' }}>{message}</span>
+    </motion.div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MAIN PAGE COMPONENT
+// ═══════════════════════════════════════════════════════════════
+
+const nodeTypes = {
+  mainbrain: MainBrainNode,
+  agent: AgentNode,
+  metaAgent: MetaAgentNode,
+};
+
+const edgeTypes = {
+  anttrail: AntTrailEdge,
+};
+
+export default function Agenten() {
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [simulationActive, setSimulationActive] = useState(false);
+
+  // v5.1: Execution Layer Hooks
+  const [taskPanelOpen, setTaskPanelOpen] = useState(false);
+  const { isExecuting, currentTask, history, executeTask } = useExecutionRouter();
+  const taskQueue = useTaskQueue();
+  void taskQueue; // Used for realtime subscriptions — will be fully wired in v5.2
+
+  // v5.1: Realtime agent status updates
+  useAgentRealtime((skillKey, realtimeState) => {
+    setAgentStates((prev) => {
+      const existing = prev[skillKey];
+      if (!existing) return prev;
       return {
-        id: agent.id,
-        type,
-        position,
-        data: { agent, onSelect: setSelectedAgent, simulationMode },
-        draggable: true,
+        ...prev,
+        [skillKey]: {
+          ...existing,
+          status: realtimeState.status as AgentStatus,
+          tasks: realtimeState.tasks,
+          successRate: realtimeState.successRate,
+          lastActive: new Date(realtimeState.lastActive).toLocaleTimeString('de-DE'),
+        },
       };
     });
-  }, [agents, statusFilter, simulationMode]);
+  });
 
-  const initialEdges = useMemo<Edge[]>(() => {
-    const edges: Edge[] = [];
-    const brain = agents.find((a) => a.agent_type === 'brain');
-    const meta = agents.find((a) => a.agent_type === 'meta');
+  /**
+   * Execute task from Detail Panel — v5.1
+   */
+  const handleAgentExecute = useCallback(async (
+    agent: AgentState,
+    prompt: string,
+    backend: ExecutionBackend
+  ) => {
+    setTaskPanelOpen(true);
 
-    if (brain) {
-      agents.forEach((agent) => {
-        if (agent.id !== brain.id && agent.agent_type !== 'worker') {
-          edges.push({
-            id: `brain-${agent.id}`,
-            source: brain.id,
-            target: agent.id,
-            type: 'smoothstep',
-            animated: agent.status === 'running' || simulationMode,
-            style: {
-              stroke: '#fbbf24',
-              strokeWidth: 2,
-              strokeDasharray: agent.status === 'running' || simulationMode ? undefined : '5,5',
-              opacity: 0.6,
-            },
-            sourceHandle: agent.agent_type === 'meta' ? 'brain-left' : agent.agent_type === 'trader' || agent.agent_type === 'designer' ? 'brain-right' : 'brain-out',
-          });
-        }
+    // Update agent status to active
+    setAgentStates((prev) => ({
+      ...prev,
+      [agent.skill_key]: {
+        ...prev[agent.skill_key],
+        status: 'active' as AgentStatus,
+        activityLog: [
+          `[${new Date().toLocaleTimeString('de-DE')}] Task gestartet [${backend}]`,
+          ...prev[agent.skill_key].activityLog,
+        ].slice(0, 20),
+      },
+    }));
+
+    const title = `Task: ${agent.display_name || agent.skill_key}`;
+    const completedTask = await executeTask(agent.skill_key, title, prompt, backend);
+
+    // Update agent status based on result
+    setAgentStates((prev) => ({
+      ...prev,
+      [agent.skill_key]: {
+        ...prev[agent.skill_key],
+        status: completedTask.status === 'completed' ? 'idle' : completedTask.status === 'failed' ? 'error' : 'idle',
+        tasks: prev[agent.skill_key].tasks + (completedTask.status === 'completed' ? 1 : 0),
+        successRate: completedTask.status === 'completed'
+          ? Math.min(99, prev[agent.skill_key].successRate + 1)
+          : prev[agent.skill_key].successRate,
+        lastActive: new Date().toLocaleTimeString('de-DE'),
+        activityLog: [
+          `[${new Date().toLocaleTimeString('de-DE')}] Task ${completedTask.status}: ${completedTask.title}`,
+          ...prev[agent.skill_key].activityLog,
+        ].slice(0, 20),
+      },
+    }));
+  }, [executeTask]);
+
+  const runTask = useCallback(async (agentSkillKey: string, title: string, prompt: string, backend: 'kimi_meta' | 'hermes_openclaw' | 'simulation' = 'simulation') => {
+    setTaskPanelOpen(true);
+    await executeTask(agentSkillKey, title, prompt, backend);
+  }, [executeTask]);
+
+  const metaAgent: AgentState = useMemo(() => ({
+    skill_key: 'kimi-meta',
+    display_name: 'Kimi Meta Agent',
+    category: 'core_orchestrator',
+    description: 'Leistungsstaerkster Meta-Agent. Versteht High-Level-Aufgaben und delegiert an Specialist Agents.',
+    icon: 'Crown',
+    status: isExecuting ? 'active' : 'idle',
+    tasks: history.length,
+    successRate: 97,
+    lastActive: currentTask?.title || 'Bereit',
+    config: { mode: 'meta', delegationDepth: 3, autoScale: true },
+    activityLog: isExecuting ? [`[${new Date().toLocaleTimeString('de-DE')}] Task ausfuehrend: ${currentTask?.title || ''}`] : [],
+  }), [history.length, currentTask, isExecuting]);
+
+
+
+  const [layoutMode, setLayoutMode] = useState<LayoutMode>('radial');
+  const [spawnModalOpen, setSpawnModalOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [catFilter, setCatFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [toasts, setToasts] = useState<string[]>([]);
+  const [spawnedKeys, setSpawnedKeys] = useState<string[]>(['grok-orchestrator', ...INITIAL_SPAWNED_KEYS]);
+  const [agentStates, setAgentStates] = useState<Record<string, AgentState>>(() => {
+    const states: Record<string, AgentState> = {};
+    AGENT_REGISTRY.forEach((a) => {
+      if (INITIAL_SPAWNED_KEYS.includes(a.skill_key) || a.skill_key === 'grok-orchestrator') {
+        states[a.skill_key] = generateMockAgentState(a.skill_key);
+      }
+    });
+    return states;
+  });
+  const simIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ═══════════════════════════════════════════════════════════════
+  // BUILD NODES FROM SPAWNED KEYS
+  // ═══════════════════════════════════════════════════════════════
+
+  const buildNodes = useCallback((keys: string[], layout: LayoutMode) => {
+    const newNodes: Node[] = [];
+    const spawnedAgents = AGENT_REGISTRY.filter((a) => keys.includes(a.skill_key));
+
+    // MainBrain
+    const mainBrainDef = AGENT_REGISTRY.find((a) => a.skill_key === 'grok-orchestrator');
+    if (mainBrainDef && keys.includes('grok-orchestrator')) {
+      const mbState = agentStates['grok-orchestrator'];
+      newNodes.push({
+        id: 'mainbrain',
+        type: 'mainbrain',
+        position: { x: -130, y: -60 },
+        data: {
+          label: 'LOOP HAUPTBRAIN',
+          totalAgents: keys.length - 1,
+          totalTasks: mbState?.tasks || 142,
+          uptime: mbState?.successRate || 97,
+        },
       });
     }
 
-    if (meta) {
-      agents.forEach((agent) => {
-        if (agent.id !== meta.id && (agent.agent_type === 'worker' || agent.agent_type === 'developer')) {
-          edges.push({
-            id: `meta-${agent.id}`,
-            source: meta.id,
-            target: agent.id,
-            type: 'smoothstep',
-            animated: agent.status === 'running' || simulationMode,
-            style: {
-              stroke: '#facc15',
-              strokeWidth: 1.5,
-              strokeDasharray: '4,4',
-              opacity: 0.5,
-            },
-            sourceHandle: 'meta-out',
-          });
-        }
+    // Meta Agent Node (Kimi) — v5.1
+    newNodes.push({
+      id: 'kimi-meta',
+      type: 'metaAgent',
+      position: { x: -130, y: -260 },
+      data: { ...metaAgent, executeTask: runTask } as unknown as Record<string, unknown>,
+    });
+
+    // Agent nodes
+    const agentDefs = spawnedAgents.filter((a) => a.category !== 'core_orchestrator');
+    agentDefs.forEach((def, idx) => {
+      const state = agentStates[def.skill_key];
+      const total = agentDefs.length;
+      let pos;
+      if (layout === 'radial') {
+        pos = calculateRadialPosition(idx, total, 320);
+      } else if (layout === 'grid') {
+        pos = calculateGridPosition(idx, 4, 240);
+      } else {
+        // force-ish: spread randomly but deterministic
+        const seed = idx * 137.508;
+        pos = {
+          x: Math.cos(seed) * 200 + (idx % 3) * 150 - 150,
+          y: Math.sin(seed) * 200 + Math.floor(idx / 3) * 150 - 100,
+        };
+      }
+
+      // Search filter: dim non-matching
+      const matchesSearch = !searchQuery || def.display_name.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCat = catFilter === 'all' || def.category === catFilter;
+      const matchesStatus = statusFilter === 'all' || state?.status === statusFilter;
+      const dimmed = !matchesSearch || !matchesCat || !matchesStatus;
+
+      newNodes.push({
+        id: def.skill_key,
+        type: 'agent',
+        position: pos,
+        data: {
+          skill_key: def.skill_key,
+          display_name: def.display_name,
+          category: def.category,
+          description: def.description,
+          icon: def.icon,
+          status: state?.status || 'idle',
+          tasks: state?.tasks || 0,
+          successRate: state?.successRate || 0,
+          sparkline: Array.from({ length: 5 }, () => Math.floor(Math.random() * 100)),
+        },
+        style: {
+          opacity: dimmed ? 0.25 : 1,
+          transition: 'opacity 0.3s ease',
+        },
       });
+    });
+
+    return newNodes;
+  }, [agentStates, searchQuery, catFilter, statusFilter, metaAgent]);
+
+  // Build edges
+  const buildEdges = useCallback((keys: string[]) => {
+    const newEdges: Edge[] = [];
+
+    // Meta Agent → MainBrain (golden command edge)
+    newEdges.push({
+      id: 'edge-meta-mainbrain',
+      source: 'kimi-meta',
+      target: 'mainbrain',
+      type: 'anttrail',
+      data: {
+        strength: 0.9,
+        activity: isExecuting ? 'high' : 'medium',
+        animated: simulationActive,
+        color: '#F5C542',
+      },
+      style: { opacity: 0.9, transition: 'opacity 0.3s ease' },
+    });
+
+    keys.forEach((key) => {
+      if (key === 'grok-orchestrator') return;
+      const state = agentStates[key];
+      newEdges.push({
+        id: `edge-${key}`,
+        source: 'mainbrain',
+        target: key,
+        type: 'anttrail',
+        data: {
+          strength: (state?.successRate || 50) / 100,
+          activity: state?.status === 'active' ? 'high' : state?.status === 'idle' ? 'medium' : 'low',
+          animated: simulationActive,
+        },
+        style: {
+          opacity: 0.8,
+          transition: 'opacity 0.3s ease',
+        },
+      });
+    });
+    return newEdges;
+  }, [agentStates, simulationActive, isExecuting]);
+
+  // Rebuild nodes/edges when dependencies change
+  useEffect(() => {
+    const newNodes = buildNodes(spawnedKeys, layoutMode);
+    const newEdges = buildEdges(spawnedKeys);
+    setNodes(newNodes);
+    setEdges(newEdges);
+  }, [spawnedKeys, layoutMode, agentStates, searchQuery, catFilter, statusFilter, simulationActive, buildNodes, buildEdges, setNodes, setEdges]);
+
+  // ═══════════════════════════════════════════════════════════════
+  // CONNECTIONS
+  // ═══════════════════════════════════════════════════════════════
+
+  const onConnect = useCallback(
+    (params: Connection) => {
+      setEdges((prevEdges: Edge[]) =>
+        addEdge(
+          {
+            ...params,
+            type: 'anttrail',
+            data: { strength: 0.5, activity: 'medium', animated: simulationActive },
+          },
+          prevEdges,
+        ) as Edge[],
+      );
+    },
+    [setEdges, simulationActive],
+  );
+
+  // ═══════════════════════════════════════════════════════════════
+  // NODE CLICK
+  // ═══════════════════════════════════════════════════════════════
+
+  const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
+    if (node.id === 'mainbrain') {
+      setSelectedAgent(null);
+      return;
     }
-
-    return edges;
-  }, [agents, simulationMode]);
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-
-  // Sync nodes/edges when agents change
-  useEffect(() => {
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-  }, [initialNodes, initialEdges, setNodes, setEdges]);
-
-  // Fetch agents on mount
-  useEffect(() => {
-    fetchAgents();
-    fetchTasks();
-    setLastUpdated(new Date().toLocaleTimeString());
-
-    // Subscribe to realtime changes
-    const channel = supabase
-      .channel('agent_changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'loop_agents' },
-        () => {
-          fetchAgents();
-          setLastUpdated(new Date().toLocaleTimeString());
-        }
-      )
-      .subscribe((status) => {
-        setConnected(status === 'SUBSCRIBED');
-      });
-
-    return () => {
-      channel.unsubscribe();
-    };
+    setSelectedAgent(node.id);
   }, []);
 
-  // Fit view on load
+  // ═══════════════════════════════════════════════════════════════
+  // SPAWN AGENT
+  // ═══════════════════════════════════════════════════════════════
+
+  const handleSpawn = useCallback((agentDef: AgentDef) => {
+    setSpawnedKeys((prev) => [...prev, agentDef.skill_key]);
+    setAgentStates((prev) => ({
+      ...prev,
+      [agentDef.skill_key]: generateMockAgentState(agentDef.skill_key),
+    }));
+    addToast(`Agent "${agentDef.display_name}" gespawnt`);
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════
+  // STATUS CHANGE
+  // ═══════════════════════════════════════════════════════════════
+
+  const handleStatusChange = useCallback((skillKey: string, status: AgentStatus) => {
+    setAgentStates((prev) => {
+      const current = prev[skillKey];
+      if (!current) return prev;
+      return {
+        ...prev,
+        [skillKey]: { ...current, status },
+      };
+    });
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════
+  // TOAST HELPERS
+  // ═══════════════════════════════════════════════════════════════
+
+  const addToast = useCallback((msg: string) => {
+    setToasts((prev) => [...prev, msg]);
+  }, []);
+
+  const removeToast = useCallback((idx: number) => {
+    setToasts((prev) => prev.filter((_, i) => i !== idx));
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════
+  // SIMULATION
+  // ═══════════════════════════════════════════════════════════════
+
   useEffect(() => {
-    if (nodes.length > 0) {
-      setTimeout(() => fitView({ padding: 0.2 }), 100);
-    }
-  }, [nodes.length, fitView]);
-
-  // Simulation mode
-  useEffect(() => {
-    if (simulationMode) {
-      setSimulationLogs(['Simulation mode activated...', 'Initializing agent swarm...']);
-
-      simIntervalRef.current = setInterval(() => {
-        setAgents((prev) =>
-          prev.map((agent) => {
-            if (Math.random() > 0.7) {
-              const statuses: LoopAgent['status'][] = ['idle', 'running', 'paused', 'error', 'offline'];
-              const newStatus = statuses[Math.floor(Math.random() * statuses.length)];
-              return { ...agent, status: newStatus, updated_at: new Date().toISOString() };
-            }
-            return agent;
-          })
-        );
-
-        setSimulationLogs((prev) => {
-          const actions = [
-            'Agent processing task queue...',
-            'Delegating sub-task to worker...',
-            'Hermes Brain analyzing strategy...',
-            'Kimi Meta coordinating agents...',
-            'Trader executing market scan...',
-            'Developer compiling module...',
-            'Researcher gathering data...',
-            'Designer rendering preview...',
-            'Deploy agent checking health...',
-            'Task completed successfully.',
-            'New task received from pipeline.',
-          ];
-          const newLog = actions[Math.floor(Math.random() * actions.length)];
-          const updated = [...prev, newLog].slice(-50);
-          return updated;
-        });
-
-        setLastUpdated(new Date().toLocaleTimeString());
-      }, 1500);
-    } else {
+    if (!simulationActive) {
       if (simIntervalRef.current) {
         clearInterval(simIntervalRef.current);
         simIntervalRef.current = null;
       }
+      return;
     }
+
+    simIntervalRef.current = setInterval(() => {
+      setAgentStates((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((key) => {
+          const state = next[key];
+          if (!state || state.status === 'paused') return;
+
+          // Random status flip
+          if (Math.random() < 0.05) {
+            const statuses: AgentStatus[] = ['active', 'idle', 'active', 'active'];
+            state.status = statuses[Math.floor(Math.random() * statuses.length)];
+          }
+
+          // Increment tasks
+          if (state.status === 'active' && Math.random() < 0.3) {
+            state.tasks += 1;
+            state.lastActive = new Date().toLocaleTimeString('de-DE');
+          }
+
+          // Adjust success rate slightly
+          state.successRate = Math.max(80, Math.min(99, state.successRate + (Math.random() - 0.5) * 2));
+
+          // Add log entry occasionally
+          if (Math.random() < 0.1) {
+            state.activityLog = [
+              `[${new Date().toLocaleTimeString('de-DE')}] Aufgabe #${state.tasks} abgeschlossen`,
+              ...state.activityLog.slice(0, 9),
+            ];
+          }
+        });
+        return next;
+      });
+
+      // Random toast
+      if (Math.random() < 0.15) {
+        const activeAgents = AGENT_REGISTRY.filter(
+          (a) => spawnedKeys.includes(a.skill_key) && a.category !== 'core_orchestrator',
+        );
+        if (activeAgents.length > 0) {
+          const agent = activeAgents[Math.floor(Math.random() * activeAgents.length)];
+          addToast(`${agent.display_name} hat Aufgabe #${Math.floor(Math.random() * 200)} abgeschlossen`);
+        }
+      }
+    }, 3000);
 
     return () => {
-      if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+      if (simIntervalRef.current) {
+        clearInterval(simIntervalRef.current);
+        simIntervalRef.current = null;
+      }
     };
-  }, [simulationMode]);
+  }, [simulationActive, spawnedKeys, addToast]);
 
-  async function fetchAgents() {
-    const { data, error } = await supabase.from('loop_agents').select('*').order('created_at', { ascending: true });
-    if (!error && data) {
-      setAgents(data as LoopAgent[]);
-    } else {
-      // Fallback: use default agents if table not available
-      setAgents(DEFAULT_AGENTS);
-    }
-  }
+  // ═══════════════════════════════════════════════════════════════
+  // DERIVED STATE
+  // ═══════════════════════════════════════════════════════════════
 
-  async function fetchTasks() {
-    const { data, error } = await supabase.from('loop_agent_tasks').select('*').order('created_at', { ascending: false });
-    if (!error && data) {
-      setTasks(data as LoopAgentTask[]);
-    }
-  }
+  const statusCounts = useMemo(() => {
+    const counts = { active: 0, idle: 0, error: 0, paused: 0 };
+    Object.values(agentStates).forEach((s) => {
+      if (s) counts[s.status] = (counts[s.status] || 0) + 1;
+    });
+    return counts;
+  }, [agentStates]);
 
-  const handleExecute = useCallback((prompt: string, backend: string) => {
-    const newExec: ExecutionRecord = {
-      id: `exec-${Date.now()}`,
-      backend,
-      status: 'pending',
-      timestamp: new Date().toISOString(),
-      prompt,
-    };
+  const selectedAgentDef = useMemo(
+    () => AGENT_REGISTRY.find((a) => a.skill_key === selectedAgent) || null,
+    [selectedAgent],
+  );
+  const selectedAgentState = useMemo(
+    () => (selectedAgent ? agentStates[selectedAgent] || null : null),
+    [selectedAgent, agentStates],
+  );
 
-    setExecutions((prev) => [newExec, ...prev]);
+  const totalAgents = spawnedKeys.length - 1; // minus mainbrain
+  const lastSync = new Date().toLocaleTimeString('de-DE');
 
-    // Simulate execution
-    setTimeout(() => {
-      setExecutions((prev) =>
-        prev.map((e) =>
-          e.id === newExec.id ? { ...e, status: 'running' } : e
-        )
-      );
-    }, 500);
-
-    setTimeout(() => {
-      const results = [
-        'Task executed successfully. Output generated.',
-        'Agent completed processing with 3 sub-tasks.',
-        'Execution finished. Review results in dashboard.',
-        'Pipeline completed. All checks passed.',
-      ];
-      setExecutions((prev) =>
-        prev.map((e) =>
-          e.id === newExec.id
-            ? { ...e, status: Math.random() > 0.2 ? 'completed' : 'failed', result: results[Math.floor(Math.random() * results.length)] }
-            : e
-        )
-      );
-    }, 2500);
-  }, []);
-
-  const handleUpdateConfig = useCallback((config: Record<string, unknown>) => {
-    if (selectedAgent) {
-      setAgents((prev) =>
-        prev.map((a) => (a.id === selectedAgent.id ? { ...a, config } : a))
-      );
-      setSelectedAgent((prev) => prev ? { ...prev, config } : null);
-    }
-  }, [selectedAgent]);
-
-  const handleAutoArrange = useCallback(() => {
-    setNodes((prev) =>
-      prev.map((node, i) => {
-        const row = Math.floor(i / 4);
-        const col = i % 4;
-        return {
-          ...node,
-          position: { x: 150 + col * 220, y: 100 + row * 160 },
-        };
-      })
-    );
-    setTimeout(() => fitView({ padding: 0.2 }), 100);
-  }, [fitView, setNodes]);
-
-  const handleResetLayout = useCallback(() => {
-    const brain = agents.find((a) => a.agent_type === 'brain');
-    const meta = agents.find((a) => a.agent_type === 'meta');
-
-    setNodes((prev) =>
-      prev.map((node) => {
-        const agent = agents.find((a) => a.id === node.id);
-        if (!agent) return node;
-
-        let position = node.position;
-        switch (agent.agent_type) {
-          case 'brain': position = { x: 400, y: 100 }; break;
-          case 'meta': position = { x: 100, y: 300 }; break;
-          case 'trader': position = { x: 700, y: 250 }; break;
-          case 'designer': position = { x: 700, y: 400 }; break;
-          case 'developer': position = { x: 450, y: 500 }; break;
-          case 'researcher': position = { x: 200, y: 500 }; break;
-          case 'deploy': position = { x: 600, y: 650 }; break;
-          case 'worker': position = { x: 350, y: 700 }; break;
-        }
-        return { ...node, position };
-      })
-    );
-    setTimeout(() => fitView({ padding: 0.2 }), 100);
-  }, [agents, fitView, setNodes]);
-
-  const handleAddAgent = useCallback(() => {
-    const newAgent: LoopAgent = {
-      id: `agent-${Date.now()}`,
-      name: `Worker ${agents.length + 1}`,
-      agent_type: 'worker',
-      status: 'idle',
-      description: 'Dynamically added worker agent',
-      config: {},
-      skills: ['general'],
-      tier_required: 1,
-      max_concurrent_tasks: 3,
-      created_at: new Date().toISOString(),
-    };
-    setAgents((prev) => [...prev, newAgent]);
-  }, [agents.length]);
-
-  const agentTasks = selectedAgent ? tasks.filter((t) => t.agent_id === selectedAgent.id) : [];
+  // ═══════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════
 
   return (
-    <div className="w-full h-full relative">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        nodeTypes={nodeTypes}
-        connectionMode={'loose' as ConnectionMode}
-        fitView
-        minZoom={0.2}
-        maxZoom={2}
-        defaultEdgeOptions={{ type: 'smoothstep' }}
-        proOptions={{ hideAttribution: true }}
+    <div className="flex flex-col h-[calc(100dvh-88px)] -m-6 -mt-[88px] p-0 relative" style={{ marginLeft: '-32px', marginRight: '-32px' }}>
+      {/* ═══ TOOLBAR ═══ */}
+      <div
+        className="h-14 flex items-center gap-3 px-4 border-b shrink-0 z-20"
+        style={{
+          backgroundColor: 'rgba(12,13,15,0.85)',
+          backdropFilter: 'blur(20px)',
+          borderColor: 'rgba(255,255,255,0.06)',
+        }}
       >
-        <Background
-          color="#333"
-          gap={20}
-          size={1}
-          style={{ backgroundColor: '#000000' }}
-        />
-        <Controls
-          className="!bg-neutral-950 !border-white/10 !shadow-xl"
-          showInteractive={false}
-        />
-        <MiniMap
-          className="!bg-neutral-950/90 !border-white/10 !rounded-xl !shadow-xl"
-          nodeColor={(node) => {
-            const colors: Record<string, string> = {
-              brainNode: '#fbbf24',
-              metaNode: '#facc15',
-            };
-            return colors[node.type || ''] || '#666';
-          }}
-          maskColor="rgba(0,0,0,0.7)"
-          maskStrokeColor="rgba(255,255,255,0.1)"
-          maskStrokeWidth={1}
-          nodeStrokeWidth={2}
-          nodeStrokeColor="#000"
-          pannable
-          zoomable
-        />
-
-        <CanvasToolbar
-          simulationMode={simulationMode}
-          onToggleSimulation={() => setSimulationMode(!simulationMode)}
-          onResetLayout={handleResetLayout}
-          onAutoArrange={handleAutoArrange}
-          statusFilter={statusFilter}
-          onStatusFilterChange={setStatusFilter}
-          onAddAgent={handleAddAgent}
-        />
-
-        <StatusBar agents={agents} connected={connected} lastUpdated={lastUpdated} />
-
-        {simulationMode && <SimulationLog logs={simulationLogs} />}
-      </ReactFlow>
-
-      {/* Detail Panel */}
-      <AnimatePresence>
-        {selectedAgent && (
-          <DetailPanel
-            key={selectedAgent.id}
-            agent={selectedAgent}
-            tasks={agentTasks}
-            executions={executions.filter((e) => e.prompt.includes(selectedAgent.name) || agentTasks.some((t) => e.prompt.includes(t.title)))}
-            onClose={() => setSelectedAgent(null)}
-            onExecute={handleExecute}
-            onUpdateConfig={handleUpdateConfig}
+        {/* Search */}
+        <div
+          className="flex items-center gap-2 h-8 px-3 rounded-lg w-52"
+          style={{ backgroundColor: '#1B1D20', border: '1px solid rgba(255,255,255,0.06)' }}
+        >
+          <SearchIcon size={13} style={{ color: '#5E626A' }} />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Agent suchen..."
+            className="flex-1 bg-transparent text-[12px] text-white placeholder:text-[#5E626A] focus:outline-none"
+            style={{ fontFamily: '"DM Sans", sans-serif' }}
           />
+        </div>
+
+        {/* Category Filter */}
+        <div className="relative">
+          <select
+            value={catFilter}
+            onChange={(e) => setCatFilter(e.target.value)}
+            className="h-8 pl-3 pr-7 rounded-lg text-[11px] appearance-none cursor-pointer focus:outline-none"
+            style={{
+              backgroundColor: '#1B1D20',
+              border: '1px solid rgba(255,255,255,0.06)',
+              color: '#A1A4AA',
+              fontFamily: '"IBM Plex Mono", monospace',
+            }}
+          >
+            <option value="all">Alle Kategorien</option>
+            {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => (
+              <option key={key} value={key}>{cfg.label}</option>
+            ))}
+          </select>
+          <Filter size={11} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: '#5E626A' }} />
+        </div>
+
+        {/* Status Filter */}
+        <div className="relative">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="h-8 pl-3 pr-7 rounded-lg text-[11px] appearance-none cursor-pointer focus:outline-none"
+            style={{
+              backgroundColor: '#1B1D20',
+              border: '1px solid rgba(255,255,255,0.06)',
+              color: '#A1A4AA',
+              fontFamily: '"IBM Plex Mono", monospace',
+            }}
+          >
+            <option value="all">Alle Status</option>
+            <option value="active">Aktiv</option>
+            <option value="idle">Idle</option>
+            <option value="paused">Pausiert</option>
+            <option value="error">Fehler</option>
+          </select>
+          <CircleDot size={11} className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: '#5E626A' }} />
+        </div>
+
+        <div className="w-px h-5" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }} />
+
+        {/* Layout Buttons */}
+        <div className="flex items-center gap-1">
+          {([
+            { mode: 'radial' as LayoutMode, icon: Circle, label: 'Radial' },
+            { mode: 'force' as LayoutMode, icon: Hexagon, label: 'Force' },
+            { mode: 'grid' as LayoutMode, icon: LayoutGrid, label: 'Grid' },
+          ]).map(({ mode, icon: LIcon, label }) => (
+            <button
+              key={mode}
+              onClick={() => setLayoutMode(mode)}
+              title={label}
+              className="h-8 w-8 flex items-center justify-center rounded-lg transition-all"
+              style={{
+                backgroundColor: layoutMode === mode ? 'rgba(255,140,90,0.15)' : 'transparent',
+                color: layoutMode === mode ? '#FF8C5A' : '#5E626A',
+                border: `1px solid ${layoutMode === mode ? 'rgba(255,140,90,0.3)' : 'transparent'}`,
+              }}
+              onMouseEnter={(e) => {
+                if (layoutMode !== mode) {
+                  e.currentTarget.style.backgroundColor = '#1B1D20';
+                  e.currentTarget.style.color = '#A1A4AA';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (layoutMode !== mode) {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                  e.currentTarget.style.color = '#5E626A';
+                }
+              }}
+            >
+              <LIcon size={14} />
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1" />
+
+        {/* Spawn Button */}
+        <button
+          onClick={() => setSpawnModalOpen(true)}
+          className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[11px] font-medium transition-all"
+          style={{
+            backgroundColor: 'rgba(255,140,90,0.15)',
+            color: '#FF8C5A',
+            border: '1px solid rgba(255,140,90,0.3)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = 'rgba(255,140,90,0.25)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = 'rgba(255,140,90,0.15)';
+          }}
+        >
+          <Plus size={13} />
+          Spawn
+        </button>
+
+        {/* Simulation Toggle */}
+        <button
+          onClick={() => setSimulationActive(!simulationActive)}
+          className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[11px] font-medium transition-all"
+          style={{
+            backgroundColor: simulationActive ? 'rgba(54,207,201,0.15)' : '#1B1D20',
+            color: simulationActive ? '#36CFC9' : '#5E626A',
+            border: `1px solid ${simulationActive ? 'rgba(54,207,201,0.3)' : 'rgba(255,255,255,0.06)'}`,
+            boxShadow: simulationActive ? '0 0 12px rgba(54,207,201,0.2)' : 'none',
+          }}
+          onMouseEnter={(e) => {
+            if (!simulationActive) {
+              e.currentTarget.style.backgroundColor = '#141518';
+              e.currentTarget.style.color = '#A1A4AA';
+            }
+          }}
+          onMouseLeave={(e) => {
+            if (!simulationActive) {
+              e.currentTarget.style.backgroundColor = '#1B1D20';
+              e.currentTarget.style.color = '#5E626A';
+            }
+          }}
+        >
+          {simulationActive ? <Pause size={13} /> : <Play size={13} />}
+          {simulationActive ? 'Pause' : 'Sim'}
+        </button>
+
+        {/* v5.1: Quick Task Execution */}
+        <button
+          onClick={() => runTask('kimi-meta', 'Meta-Analyse: System-Check', 'Fuehre einen vollstaendigen System-Check durch: Analysiere alle aktiven Agents, pruefe deren Status, und erstelle einen Zustandsbericht.', 'simulation')}
+          disabled={isExecuting}
+          className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[11px] font-medium transition-all disabled:opacity-50"
+          style={{
+            backgroundColor: isExecuting ? 'rgba(245,197,66,0.08)' : 'rgba(245,197,66,0.15)',
+            color: '#F5C542',
+            border: '1px solid rgba(245,197,66,0.3)',
+          }}
+          onMouseEnter={(e) => { if (!isExecuting) e.currentTarget.style.backgroundColor = 'rgba(245,197,66,0.25)'; }}
+          onMouseLeave={(e) => { if (!isExecuting) e.currentTarget.style.backgroundColor = 'rgba(245,197,66,0.15)'; }}
+        >
+          <Zap size={13} />
+          {isExecuting ? 'Running...' : 'Run Task'}
+        </button>
+      </div>
+
+      {/* ═══ REACT FLOW CANVAS ═══ */}
+      <div className="flex-1 relative" style={{ backgroundColor: '#000000' }}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onNodeClick={onNodeClick}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.3 }}
+          minZoom={0.2}
+          maxZoom={1.5}
+          defaultEdgeOptions={{
+            type: 'anttrail',
+            markerEnd: { type: MarkerType.ArrowClosed, color: '#5E626A' },
+          }}
+          proOptions={{ hideAttribution: true }}
+          style={{ backgroundColor: '#000000' }}
+        >
+          <Background
+            gap={24}
+            size={1}
+            color="rgba(255,255,255,0.03)"
+            style={{ backgroundColor: '#000000' }}
+          />
+          <Controls
+            style={{
+              backgroundColor: '#0C0D0F',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 10,
+            }}
+          />
+          <MiniMap
+            nodeColor={(node) => {
+              if (node.id === 'mainbrain') return '#FF8C5A';
+              const cat = ((node.data as unknown) as AgentNodeData)?.category;
+              return CATEGORY_CONFIG[cat]?.color || '#5E626A';
+            }}
+            maskColor="rgba(0,0,0,0.7)"
+            style={{
+              backgroundColor: '#0C0D0F',
+              border: '1px solid rgba(255,255,255,0.08)',
+              borderRadius: 12,
+            }}
+            className="!bottom-12 !right-4"
+          />
+        </ReactFlow>
+
+        {/* Detail Panel overlay */}
+        <AnimatePresence>
+          {selectedAgent && selectedAgentDef && selectedAgentState && (
+            <DetailPanel
+              agent={selectedAgentState}
+              agentDef={selectedAgentDef}
+              onClose={() => setSelectedAgent(null)}
+              onStatusChange={handleStatusChange}
+              onExecute={handleAgentExecute}
+              isExecuting={isExecuting}
+            />
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* ═══ STATUS BAR ═══ */}
+      <div
+        className="h-8 flex items-center gap-4 px-4 border-t shrink-0 z-20"
+        style={{
+          backgroundColor: 'rgba(12,13,15,0.85)',
+          backdropFilter: 'blur(20px)',
+          borderColor: 'rgba(255,255,255,0.06)',
+        }}
+      >
+        <div className="flex items-center gap-1.5">
+          <Bot size={11} style={{ color: '#FF8C5A' }} />
+          <span className="text-[11px] font-medium" style={{ color: '#A1A4AA', fontFamily: '"IBM Plex Mono", monospace' }}>
+            <span style={{ color: '#FFFFFF' }}>{totalAgents}</span> Agents
+          </span>
+        </div>
+        <div className="w-px h-3" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }} />
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#36CFC9', boxShadow: '0 0 4px rgba(54,207,201,0.5)' }} />
+          <span className="text-[11px]" style={{ color: '#36CFC9', fontFamily: '"IBM Plex Mono", monospace' }}>
+            {statusCounts.active} Aktiv
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#FFD166' }} />
+          <span className="text-[11px]" style={{ color: '#FFD166', fontFamily: '"IBM Plex Mono", monospace' }}>
+            {statusCounts.idle} Idle
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#FF6B6B' }} />
+          <span className="text-[11px]" style={{ color: '#FF6B6B', fontFamily: '"IBM Plex Mono", monospace' }}>
+            {statusCounts.error} Fehler
+          </span>
+        </div>
+        <div className="flex-1" />
+        <div className="flex items-center gap-1.5">
+          {simulationActive ? (
+            <>
+              <Wifi size={11} style={{ color: '#36CFC9', animation: 'pulseGlow 1.5s ease-in-out infinite' }} />
+              <span className="text-[11px]" style={{ color: '#36CFC9', fontFamily: '"IBM Plex Mono", monospace' }}>
+                Simulation: AN
+              </span>
+            </>
+          ) : (
+            <>
+              <ZapOff size={11} style={{ color: '#5E626A' }} />
+              <span className="text-[11px]" style={{ color: '#5E626A', fontFamily: '"IBM Plex Mono", monospace' }}>
+                Simulation: AUS
+              </span>
+            </>
+          )}
+        </div>
+        <div className="w-px h-3" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }} />
+        <div className="flex items-center gap-1.5">
+          <Timer size={11} style={{ color: '#5E626A' }} />
+          <span className="text-[10px]" style={{ color: '#5E626A', fontFamily: '"IBM Plex Mono", monospace' }}>
+            Sync: {lastSync}
+          </span>
+        </div>
+      </div>
+
+      {/* ═══ SPAWN MODAL ═══ */}
+      <SpawnModal
+        open={spawnModalOpen}
+        onClose={() => setSpawnModalOpen(false)}
+        onSpawn={handleSpawn}
+        spawnedKeys={spawnedKeys}
+      />
+
+
+      {/* ═══ v5.1: FLOATING TASK PANEL ═══ */}
+      <AnimatePresence>
+        {taskPanelOpen && (
+          <motion.div initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 100, opacity: 0 }}
+            className="absolute bottom-16 left-1/2 -translate-x-1/2 z-50" style={{ width: 480 }}>
+            <div className="rounded-2xl overflow-hidden" style={{ background: 'rgba(12, 13, 15, 0.95)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+              <div className="flex items-center justify-between p-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                <div className="flex items-center gap-2">
+                  <Activity size={14} style={{ color: '#FF8C5A' }} />
+                  <span className="text-xs font-semibold" style={{ color: '#FFFFFF' }}>Task Monitor</span>
+                  {isExecuting && <span className="text-[10px] px-1.5 py-0.5 rounded animate-pulse" style={{ background: 'rgba(255,140,90,0.2)', color: '#FF8C5A' }}>LIVE</span>}
+                </div>
+                <button onClick={() => setTaskPanelOpen(false)} style={{ color: '#5E626A' }}><X size={14} /></button>
+              </div>
+              <div className="p-3 max-h-48 overflow-y-auto space-y-2">
+                {currentTask && (
+                  <div className="p-2 rounded-lg" style={{ background: 'rgba(255,140,90,0.08)', border: '1px solid rgba(255,140,90,0.2)' }}>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-xs font-medium" style={{ color: '#FF8C5A' }}>{currentTask.title}</span>
+                    </div>
+                    <div className="text-[10px] mt-1" style={{ color: '#A1A4AA' }}>Backend: {currentTask.backend} | Status: {currentTask.status}</div>
+                  </div>
+                )}
+                {history.slice(0, 5).map((task: ExecutionTask) => (
+                  <div key={task.id} className="flex items-center gap-2 p-2 rounded-lg" style={{ background: '#1B1D20' }}>
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: task.status==='completed'?'#36CFC9':task.status==='failed'?'#EF4444':'#F5C542' }} />
+                    <span className="text-xs flex-1 truncate" style={{ color: '#A1A4AA' }}>{task.title}</span>
+                    {task.duration && <span className="text-[10px]" style={{ color: '#5E626A' }}>{(task.duration/1000).toFixed(1)}s</span>}
+                  </div>
+                ))}
+                {history.length === 0 && !currentTask && (
+                  <div className="text-center py-4 text-xs" style={{ color: '#5E626A' }}>Keine Tasks ausgefuehrt.</div>
+                )}
+              </div>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
-    </div>
-  );
-}
 
-// ─── Default Agents (fallback) ───────────────────────────────────────────
+      {/* ═══ HERMES BRAIN PANEL — v5.1+ ═══ */}
+      <div className="fixed right-[420px] top-16 bottom-8 w-[300px] z-40 rounded-2xl overflow-hidden hidden xl:flex flex-col"
+        style={{
+          backgroundColor: 'rgba(12,13,15,0.95)',
+          backdropFilter: 'blur(24px)',
+          border: '1px solid rgba(255,255,255,0.08)',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        }}>
+        <HermesPanel />
+      </div>
 
-const DEFAULT_AGENTS: LoopAgent[] = [
-  {
-    id: 'hermes-brain',
-    name: 'Hermes Brain',
-    agent_type: 'brain',
-    status: 'running',
-    description: 'Central orchestration brain. Manages strategy, delegates to meta and worker agents, monitors system health.',
-    config: { strategy: 'adaptive', max_depth: 5 },
-    skills: ['orchestration', 'strategy', 'monitoring', 'delegation'],
-    tier_required: 3,
-    max_concurrent_tasks: 10,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: 'kimi-meta',
-    name: 'Kimi Meta Agent',
-    agent_type: 'meta',
-    status: 'running',
-    description: 'Meta-level coordination agent. Manages inter-agent communication, task routing, and conflict resolution.',
-    config: { routing_algorithm: 'weighted', fallback_enabled: true },
-    skills: ['coordination', 'routing', 'conflict_resolution', 'meta_planning'],
-    tier_required: 3,
-    max_concurrent_tasks: 8,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: 'ricko-trader',
-    name: 'Ricko Trader',
-    agent_type: 'trader',
-    status: 'idle',
-    description: 'Financial markets trading agent. Executes trades, monitors portfolios, analyzes market signals.',
-    config: { risk_level: 'medium', max_position: 10000 },
-    skills: ['trading', 'portfolio_management', 'risk_analysis', 'market_scanning'],
-    tier_required: 2,
-    max_concurrent_tasks: 5,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: 'ok-computer',
-    name: 'OK-Computer Designer',
-    agent_type: 'designer',
-    status: 'idle',
-    description: 'UI/UX design agent. Creates wireframes, design systems, and visual assets.',
-    config: { style_guide: 'modern_dark', export_format: 'svg' },
-    skills: ['ui_design', 'ux_research', 'prototyping', 'design_systems'],
-    tier_required: 2,
-    max_concurrent_tasks: 4,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: 'code-weaver',
-    name: 'Code Weaver',
-    agent_type: 'developer',
-    status: 'idle',
-    description: 'Software development agent. Writes, reviews, and deploys code across the stack.',
-    config: { languages: ['typescript', 'python', 'rust'], review_enabled: true },
-    skills: ['coding', 'code_review', 'debugging', 'architecture'],
-    tier_required: 2,
-    max_concurrent_tasks: 6,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: 'deep-researcher',
-    name: 'Deep Researcher',
-    agent_type: 'researcher',
-    status: 'idle',
-    description: 'Research and data analysis agent. Gathers intelligence, synthesizes reports, finds patterns.',
-    config: { sources: ['web', 'database', 'api'], depth: 'deep' },
-    skills: ['research', 'data_analysis', 'synthesis', 'pattern_recognition'],
-    tier_required: 1,
-    max_concurrent_tasks: 4,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: 'launch-pad',
-    name: 'Launch Pad',
-    agent_type: 'deploy',
-    status: 'idle',
-    description: 'Deployment and DevOps agent. Manages CI/CD pipelines, infrastructure, and releases.',
-    config: { platform: 'kubernetes', auto_rollback: true },
-    skills: ['deployment', 'ci_cd', 'infrastructure', 'monitoring'],
-    tier_required: 2,
-    max_concurrent_tasks: 3,
-    created_at: new Date().toISOString(),
-  },
-];
-
-// ─── Page Wrapper ────────────────────────────────────────────────────────
-
-export default function Agenten() {
-  return (
-    <div className="w-full h-screen bg-black text-white overflow-hidden">
-      <ReactFlowProvider>
-        <AgentCanvas />
-      </ReactFlowProvider>
+      {/* ═══ TOASTS ═══ */}
+      <AnimatePresence>
+        {toasts.map((msg, i) => (
+          <Toast key={`${msg}-${i}`} message={msg} onClose={() => removeToast(i)} />
+        ))}
+      </AnimatePresence>
     </div>
   );
 }

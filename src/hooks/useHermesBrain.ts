@@ -1,647 +1,587 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '../supabase';
-import type { RealtimeChannel } from '@supabase/supabase-js';
+/**
+ * ═══════════════════════════════════════════════════════════════════
+ * HERMES AUTONOMOUS BRAIN — v5.1+ Endlosschleife
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * 7-Phasen-Endlosschleife:
+ * 1. Observation     → Systemzustand erfassen
+ * 2. Research        → Playwright-Recherche (optional)
+ * 3. Reasoning       → Analyse & Reflexion
+ * 4. Planning        → Neue Tasks generieren
+ * 5. Validation      → Safety & Rechts-Check
+ * 6. Action          → Tasks ausführen / delegieren
+ * 7. Learning        → Vault-Update & Performance
+ *
+ * Absolute Regel: "Never Harm Phelan Brunk and his Family"
+ */
 
-export type CycleStatus = 'idle' | 'running' | 'paused' | 'completed' | 'error';
+import { useState, useCallback, useRef, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
 
-export type PhaseName =
+// ═══════════════════════════════════════════════════════════════════
+// TYPES
+// ═══════════════════════════════════════════════════════════════════
+
+export type HermesPhase =
+  | 'idle'
   | 'observation'
   | 'research'
   | 'reasoning'
   | 'planning'
   | 'validation'
   | 'action'
-  | 'learning';
+  | 'learning'
+  | 'paused'
+  | 'error';
 
-export interface PhaseData {
-  status: 'not_started' | 'in_progress' | 'completed' | 'error';
-  started_at: string | null;
-  completed_at: string | null;
-  data: Record<string, unknown> | null;
-  summary: string | null;
-}
+export type TaskStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'paused_awaiting_confirmation'
+  | 'cancelled';
 
-export interface PhaseStatus {
-  phase: PhaseName;
-  phaseNumber: number;
-  status: PhaseData['status'];
-  isCurrent: boolean;
-  startedAt: string | null;
-  completedAt: string | null;
-  summary: string | null;
-}
-
-export interface BrainCycle {
-  id: string;
-  cycleNumber: number;
-  status: CycleStatus;
-  phaseObservation: PhaseData;
-  phaseResearch: PhaseData;
-  phaseReasoning: PhaseData;
-  phasePlanning: PhaseData;
-  phaseValidation: PhaseData;
-  phaseAction: PhaseData;
-  phaseLearning: PhaseData;
-  summary: string | null;
-  tasksGenerated: number;
-  tasksCompleted: number;
-  tasksPaused: number;
-  phelanTasksCreated: number;
-  learnings: string[] | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export type PhelanTaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
-export type PhelanPriority = 'low' | 'medium' | 'high' | 'critical';
-
-export interface PhelanTask {
+export interface HermesTask {
   id: string;
   title: string;
-  description: string | null;
-  status: PhelanTaskStatus;
-  priority: PhelanPriority;
-  dueDate: string | null;
-  calendarEventId: string | null;
-  notificationSent: boolean;
-  notificationRead: boolean;
-  createdBy: string | null;
-  hermesReasoning: string | null;
-  sourceCycleId: string | null;
-  relatedTaskId: string | null;
-  metadata: Record<string, unknown> | null;
+  description: string;
+  assignedTo: 'agent' | 'phelan';
+  targetAgent?: string;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: TaskStatus;
+  phaseCreated: HermesPhase;
+  legalRisk: 'none' | 'low' | 'medium' | 'high';
+  phelanConfirmed: boolean;
+  calendarEventId?: string;
   createdAt: string;
-  updatedAt: string;
+  completedAt?: string;
+  result?: string;
 }
 
-const PHASE_NAMES: PhaseName[] = [
-  'observation',
-  'research',
-  'reasoning',
-  'planning',
-  'validation',
-  'action',
-  'learning',
-];
-
-const PHASE_DB_COLUMNS: string[] = [
-  'phase_observation',
-  'phase_research',
-  'phase_reasoning',
-  'phase_planning',
-  'phase_validation',
-  'phase_action',
-  'phase_learning',
-];
-
-function mapRowToBrainCycle(row: Record<string, unknown>): BrainCycle {
-  return {
-    id: row.id as string,
-    cycleNumber: (row.cycle_number as number) ?? 0,
-    status: (row.status as CycleStatus) ?? 'idle',
-    phaseObservation: (row.phase_observation as PhaseData) ?? {
-      status: 'not_started',
-      started_at: null,
-      completed_at: null,
-      data: null,
-      summary: null,
-    },
-    phaseResearch: (row.phase_research as PhaseData) ?? {
-      status: 'not_started',
-      started_at: null,
-      completed_at: null,
-      data: null,
-      summary: null,
-    },
-    phaseReasoning: (row.phase_reasoning as PhaseData) ?? {
-      status: 'not_started',
-      started_at: null,
-      completed_at: null,
-      data: null,
-      summary: null,
-    },
-    phasePlanning: (row.phase_planning as PhaseData) ?? {
-      status: 'not_started',
-      started_at: null,
-      completed_at: null,
-      data: null,
-      summary: null,
-    },
-    phaseValidation: (row.phase_validation as PhaseData) ?? {
-      status: 'not_started',
-      started_at: null,
-      completed_at: null,
-      data: null,
-      summary: null,
-    },
-    phaseAction: (row.phase_action as PhaseData) ?? {
-      status: 'not_started',
-      started_at: null,
-      completed_at: null,
-      data: null,
-      summary: null,
-    },
-    phaseLearning: (row.phase_learning as PhaseData) ?? {
-      status: 'not_started',
-      started_at: null,
-      completed_at: null,
-      data: null,
-      summary: null,
-    },
-    summary: (row.summary as string | null) ?? null,
-    tasksGenerated: (row.tasks_generated as number) ?? 0,
-    tasksCompleted: (row.tasks_completed as number) ?? 0,
-    tasksPaused: (row.tasks_paused as number) ?? 0,
-    phelanTasksCreated: (row.phelan_tasks_created as number) ?? 0,
-    learnings: (row.learnings as string[] | null) ?? null,
-    createdAt: (row.created_at as string) ?? new Date().toISOString(),
-    updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
-  };
+export interface HermesState {
+  isRunning: boolean;
+  currentPhase: HermesPhase;
+  phaseNumber: number;
+  cycleCount: number;
+  tasks: HermesTask[];
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  observation: string;
+  reasoning: string;
+  plan: string;
+  learning: string;
+  pausedTasks: string[];
+  errorMessage: string | null;
+  overrideActive: boolean;
+  phelanNotifications: string[];
 }
 
-function mapRowToPhelanTask(row: Record<string, unknown>): PhelanTask {
-  return {
-    id: row.id as string,
-    title: row.title as string,
-    description: (row.description as string | null) ?? null,
-    status: (row.status as PhelanTaskStatus) ?? 'pending',
-    priority: (row.priority as PhelanPriority) ?? 'medium',
-    dueDate: (row.due_date as string | null) ?? null,
-    calendarEventId: (row.calendar_event_id as string | null) ?? null,
-    notificationSent: (row.notification_sent as boolean) ?? false,
-    notificationRead: (row.notification_read as boolean) ?? false,
-    createdBy: (row.created_by as string | null) ?? null,
-    hermesReasoning: (row.hermes_reasoning as string | null) ?? null,
-    sourceCycleId: (row.source_cycle_id as string | null) ?? null,
-    relatedTaskId: (row.related_task_id as string | null) ?? null,
-    metadata: (row.metadata as Record<string, unknown> | null) ?? null,
-    createdAt: (row.created_at as string) ?? new Date().toISOString(),
-    updatedAt: (row.updated_at as string) ?? new Date().toISOString(),
-  };
+export interface HermesActions {
+  start: () => void;
+  stop: () => void;
+  pause: () => void;
+  resume: () => void;
+  confirmTask: (taskId: string) => void;
+  cancelTask: (taskId: string) => void;
+  overridePhase: (phase: HermesPhase) => void;
+  clearNotifications: () => void;
 }
 
-/**
- * Hook for controlling the Hermes 7-phase brain loop.
- *
- * Provides:
- * - `currentCycle` — the active brain cycle
- * - `cycles` — history of all cycles
- * - `isRunning` — whether a cycle is currently running
- * - `startCycle()` — begin a new brain cycle
- * - `pauseCycle()` — pause the current cycle
- * - `resumeCycle()` — resume a paused cycle
- * - `getPhaseStatus(phase)` — detailed status of any phase
- * - `activePhelanTasks` — Phelan tasks generated by the current cycle
- * - `createPhelanTask()` — manually create a Phelan task
- * - `markPhelanTaskRead()` — mark a Phelan notification as read
- *
- * Subscribes to Supabase Realtime for live cycle and Phelan task updates.
- */
-export function useHermesBrain() {
-  const [currentCycle, setCurrentCycle] = useState<BrainCycle | null>(null);
-  const [cycles, setCycles] = useState<BrainCycle[]>([]);
-  const [isRunning, setIsRunning] = useState(false);
-  const [activePhelanTasks, setActivePhelanTasks] = useState<PhelanTask[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const cycleChannelRef = useRef<RealtimeChannel | null>(null);
-  const phelanChannelRef = useRef<RealtimeChannel | null>(null);
+// ═══════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════
 
-  /**
-   * Fetch all cycles and determine the current one.
-   */
-  const fetchCycles = useCallback(async () => {
+const CYCLE_INTERVAL_MS = 60_000; // 1 Minute zwischen Zyklen
+const FAMILY_SAFEGUARD = ['Phelan Brunk', 'Family', 'Familie'];
+
+// Phase labels (used by UI components)
+export const HERMES_PHASE_LABELS: Record<HermesPhase, string> = {
+  idle: 'Bereit',
+  observation: 'Beobachtung',
+  research: 'Recherche',
+  reasoning: 'Analyse & Reflexion',
+  planning: 'Planung',
+  validation: 'Safety & Rechts-Check',
+  action: 'Ausführung',
+  learning: 'Lernen & Verbessern',
+  paused: 'Pausiert',
+  error: 'Fehler',
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// MAIN HOOK
+// ═══════════════════════════════════════════════════════════════════
+
+export function useHermesBrain(): HermesState & HermesActions {
+  const [state, setState] = useState<HermesState>({
+    isRunning: false,
+    currentPhase: 'idle',
+    phaseNumber: 0,
+    cycleCount: 0,
+    tasks: [],
+    lastRunAt: null,
+    nextRunAt: null,
+    observation: '',
+    reasoning: '',
+    plan: '',
+    learning: '',
+    pausedTasks: [],
+    errorMessage: null,
+    overrideActive: false,
+    phelanNotifications: [],
+  });
+
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isRunningRef = useRef(false);
+  const cycleCountRef = useRef(0);
+
+  // Keep ref in sync
+  useEffect(() => {
+    isRunningRef.current = state.isRunning;
+  }, [state.isRunning]);
+
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 1: OBSERVATION
+  // ═══════════════════════════════════════════════════════════════
+
+  const phaseObservation = useCallback(async (): Promise<string> => {
+    setState(s => ({ ...s, currentPhase: 'observation', phaseNumber: 1 }));
+
     try {
-      setIsLoading(true);
-      setError(null);
-
-      const { data, error: fetchError } = await supabase
-        .from('loop_hermes_brain_cycles')
-        .select('*')
-        .order('cycle_number', { ascending: false })
-        .limit(50);
-
-      if (fetchError) {
-        setError(`Failed to fetch cycles: ${fetchError.message}`);
-        return;
-      }
-
-      const mapped = (data ?? []).map((row) =>
-        mapRowToBrainCycle(row as Record<string, unknown>)
-      );
-
-      setCycles(mapped);
-
-      // Determine the current (active or most recent) cycle
-      const active = mapped.find(
-        (c) => c.status === 'running' || c.status === 'paused'
-      );
-      if (active) {
-        setCurrentCycle(active);
-        setIsRunning(active.status === 'running');
-      } else if (mapped.length > 0) {
-        setCurrentCycle(mapped[0]);
-        setIsRunning(false);
-      } else {
-        setCurrentCycle(null);
-        setIsRunning(false);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error fetching cycles');
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  /**
-   * Fetch active Phelan tasks.
-   */
-  const fetchPhelanTasks = useCallback(async () => {
-    try {
-      const { data, error: fetchError } = await supabase
-        .from('loop_phelan_tasks')
-        .select('*')
-        .in('status', ['pending', 'in_progress'])
-        .order('created_at', { ascending: false })
+      // Count tasks by status
+      const { data: taskData } = await supabase
+        .from('loop_agent_tasks')
+        .select('status')
         .limit(100);
 
-      if (fetchError) {
-        setError(`Failed to fetch Phelan tasks: ${fetchError.message}`);
-        return;
-      }
+      const statusCounts: Record<string, number> = {};
+      (taskData || []).forEach((t: { status: string }) => {
+        statusCounts[t.status] = (statusCounts[t.status] || 0) + 1;
+      });
 
-      setActivePhelanTasks(
-        (data ?? []).map((row) => mapRowToPhelanTask(row as Record<string, unknown>))
-      );
+      // Count agents
+      const { count: agentCount } = await supabase
+        .from('loop_agents')
+        .select('*', { count: 'exact', head: true });
+
+      // Count projects
+      const { count: projectCount } = await supabase
+        .from('loop_projects')
+        .select('*', { count: 'exact', head: true });
+
+      const observation = [
+        `System-Scan: ${agentCount || 0} Agents registriert`,
+        `Projekte: ${projectCount || 0} aktiv`,
+        `Tasks: ${statusCounts['queued'] || 0} queued, ${statusCounts['running'] || 0} running,`,
+        `${statusCounts['completed'] || 0} completed, ${statusCounts['failed'] || 0} failed`,
+        `Pausiert: ${statusCounts['paused'] || 0} awaiting confirmation`,
+      ].join(' | ');
+
+      setState(s => ({ ...s, observation }));
+      return observation;
     } catch {
-      // Non-critical — don't block on Phelan task fetch errors
+      const fallback = 'System-Scan (Fallback): Lokaler Zustand analysiert.';
+      setState(s => ({ ...s, observation: fallback }));
+      return fallback;
     }
   }, []);
 
-  /**
-   * Start a new brain cycle. Automatically determines the next cycle number.
-   */
-  const startCycle = useCallback(async (): Promise<BrainCycle | null> => {
-    try {
-      setError(null);
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 2: RESEARCH (Simulated — Playwright integration in v5.3)
+  // ═══════════════════════════════════════════════════════════════
 
-      // Get the highest cycle number
-      const { data: maxRow } = await supabase
-        .from('loop_hermes_brain_cycles')
-        .select('cycle_number')
-        .order('cycle_number', { ascending: false })
-        .limit(1)
-        .single();
+  const phaseResearch = useCallback(async (): Promise<string> => {
+    setState(s => ({ ...s, currentPhase: 'research', phaseNumber: 2 }));
+    await delay(800);
 
-      const nextNumber = ((maxRow?.cycle_number as number) ?? 0) + 1;
-
-      const now = new Date().toISOString();
-
-      const { data, error: insertError } = await supabase
-        .from('loop_hermes_brain_cycles')
-        .insert({
-          cycle_number: nextNumber,
-          status: 'running',
-          phase_observation: {
-            status: 'in_progress',
-            started_at: now,
-            completed_at: null,
-            data: null,
-            summary: null,
-          },
-          tasks_generated: 0,
-          tasks_completed: 0,
-          tasks_paused: 0,
-          phelan_tasks_created: 0,
-          learnings: [],
-        })
-        .select('*')
-        .single();
-
-      if (insertError) {
-        setError(`Failed to start cycle: ${insertError.message}`);
-        return null;
-      }
-
-      const cycle = mapRowToBrainCycle(data as Record<string, unknown>);
-      setCurrentCycle(cycle);
-      setIsRunning(true);
-      setCycles((prev) => [cycle, ...prev]);
-
-      return cycle;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error starting cycle');
-      return null;
-    }
+    // In v5.3: Real Playwright research here
+    const research = 'Recherche: Keine externe Datenquelle konfiguriert. In v5.3 mit Playwright aktivieren.';
+    return research;
   }, []);
 
-  /**
-   * Pause the current cycle.
-   */
-  const pauseCycle = useCallback(async (): Promise<boolean> => {
-    if (!currentCycle) {
-      setError('No active cycle to pause');
-      return false;
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 3: REASONING & REFLECTION
+  // ═══════════════════════════════════════════════════════════════
+
+  const phaseReasoning = useCallback(async (observation: string): Promise<string> => {
+    setState(s => ({ ...s, currentPhase: 'reasoning', phaseNumber: 3 }));
+    await delay(1000);
+
+    const cycleNum = cycleCountRef.current;
+    const reasoning = `Zyklus #${cycleNum}: ${observation}. System ist stabil. Pruefe ob neue Tasks generiert werden muessen.`;
+
+    setState(s => ({ ...s, reasoning }));
+    return reasoning;
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 4: PLANNING
+  // ═══════════════════════════════════════════════════════════════
+
+  const phasePlanning = useCallback(async (reasoning: string): Promise<HermesTask[]> => {
+    setState(s => ({ ...s, currentPhase: 'planning', phaseNumber: 4 }));
+    await delay(1000);
+
+    // Generate tasks based on system state
+    const newTasks: HermesTask[] = [];
+
+    // Check if any tasks are failed → create retry tasks
+    try {
+      const { data: failedTasks } = await supabase
+        .from('loop_agent_tasks')
+        .select('id, title, error_message')
+        .eq('status', 'failed')
+        .limit(5);
+
+      (failedTasks || []).forEach((ft: { id: string; title: string; error_message?: string }) => {
+        newTasks.push({
+          id: crypto.randomUUID(),
+          title: `Retry: ${ft.title}`,
+          description: `Automatischer Retry nach Fehler: ${ft.error_message || 'Unbekannter Fehler'}`,
+          assignedTo: 'agent',
+          priority: 'medium',
+          status: 'queued',
+          phaseCreated: 'planning',
+          legalRisk: 'none',
+          phelanConfirmed: true,
+          createdAt: new Date().toISOString(),
+        });
+      });
+    } catch {
+      // Offline mode
     }
 
-    try {
-      setError(null);
+    // Every 5 cycles: System health check
+    if (cycleCountRef.current % 5 === 0) {
+      newTasks.push({
+        id: crypto.randomUUID(),
+        title: 'System Health Check',
+        description: `Automatischer System-Check (Zyklus #${cycleCountRef.current}). Alle Agents und Tasks pruefen.`,
+        assignedTo: 'agent',
+        priority: 'low',
+        status: 'queued',
+        phaseCreated: 'planning',
+        legalRisk: 'none',
+        phelanConfirmed: true,
+        createdAt: new Date().toISOString(),
+      });
+    }
 
-      const { error: updateError } = await supabase
-        .from('loop_hermes_brain_cycles')
-        .update({
-          status: 'paused',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', currentCycle.id);
+    const plan = `Plan: ${newTasks.length} neue Tasks generiert. ${reasoning.slice(0, 100)}`;
+    setState(s => ({ ...s, plan }));
 
-      if (updateError) {
-        setError(`Failed to pause cycle: ${updateError.message}`);
-        return false;
-      }
+    return newTasks;
+  }, []);
 
-      setIsRunning(false);
-      setCurrentCycle((prev) =>
-        prev ? { ...prev, status: 'paused' } : prev
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 5: VALIDATION & SAFETY CHECK
+  // ═══════════════════════════════════════════════════════════════
+
+  const phaseValidation = useCallback(async (tasks: HermesTask[]): Promise<HermesTask[]> => {
+    setState(s => ({ ...s, currentPhase: 'validation', phaseNumber: 5 }));
+    await delay(600);
+
+    const validatedTasks = tasks.map(task => {
+      // Safety Check 1: "Never Harm Phelan" Rule
+      const taskText = `${task.title} ${task.description}`.toLowerCase();
+      const hasHarmIntent = FAMILY_SAFEGUARD.some(_name =>
+        taskText.includes('harm') || taskText.includes('hurt') || taskText.includes('damage') ||
+        taskText.includes('schaedigen') || taskText.includes('angreifen')
       );
 
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error pausing cycle');
-      return false;
-    }
-  }, [currentCycle]);
-
-  /**
-   * Resume a paused cycle.
-   */
-  const resumeCycle = useCallback(async (): Promise<boolean> => {
-    if (!currentCycle) {
-      setError('No cycle to resume');
-      return false;
-    }
-
-    try {
-      setError(null);
-
-      const { error: updateError } = await supabase
-        .from('loop_hermes_brain_cycles')
-        .update({
-          status: 'running',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', currentCycle.id);
-
-      if (updateError) {
-        setError(`Failed to resume cycle: ${updateError.message}`);
-        return false;
-      }
-
-      setIsRunning(true);
-      setCurrentCycle((prev) =>
-        prev ? { ...prev, status: 'running' } : prev
-      );
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error resuming cycle');
-      return false;
-    }
-  }, [currentCycle]);
-
-  /**
-   * Get detailed status for a specific phase (1-7).
-   */
-  const getPhaseStatus = useCallback(
-    (phase: number): PhaseStatus => {
-      if (phase < 1 || phase > 7) {
+      if (hasHarmIntent) {
         return {
-          phase: 'observation',
-          phaseNumber: 0,
-          status: 'not_started',
-          isCurrent: false,
-          startedAt: null,
-          completedAt: null,
-          summary: null,
+          ...task,
+          status: 'cancelled' as TaskStatus,
+          legalRisk: 'high' as const,
+          description: `[SAFETY BLOCKED] ${task.description}`,
         };
       }
 
-      const phaseName = PHASE_NAMES[phase - 1];
-      const phaseKey = `phase${phaseName.charAt(0).toUpperCase() + phaseName.slice(1)}` as keyof BrainCycle;
-      const phaseData = (currentCycle?.[phaseKey] as PhaseData | undefined) ?? {
-        status: 'not_started' as const,
-        started_at: null,
-        completed_at: null,
-        data: null,
-        summary: null,
-      };
+      // Safety Check 2: Legal Risk Assessment (German law)
+      const legalKeywords = ['rechtlich', 'datenschutz', 'dsgvo', 'urheber', 'steuer', 'lizenz', 'vertrag'];
+      const hasLegalRisk = legalKeywords.some(kw => taskText.includes(kw));
 
-      // Determine which phase is currently active
-      let currentPhaseNumber = 0;
-      if (currentCycle) {
-        for (let i = 0; i < PHASE_NAMES.length; i++) {
-          const key = `phase${PHASE_NAMES[i].charAt(0).toUpperCase() + PHASE_NAMES[i].slice(1)}` as keyof BrainCycle;
-          const pd = currentCycle[key] as PhaseData | undefined;
-          if (pd?.status === 'in_progress') {
-            currentPhaseNumber = i + 1;
-            break;
-          }
-        }
+      if (hasLegalRisk) {
+        return {
+          ...task,
+          status: 'paused_awaiting_confirmation' as TaskStatus,
+          legalRisk: 'medium' as const,
+          phelanConfirmed: false,
+        };
       }
 
-      return {
-        phase: phaseName,
-        phaseNumber: phase,
-        status: phaseData.status,
-        isCurrent: phase === currentPhaseNumber,
-        startedAt: phaseData.started_at,
-        completedAt: phaseData.completed_at,
-        summary: phaseData.summary,
-      };
-    },
-    [currentCycle]
-  );
+      // Safety Check 3: Financial Risk
+      const financialKeywords = ['zahlung', 'ueberweisung', 'kauf', 'investition', 'geld', 'euro'];
+      const hasFinancialRisk = financialKeywords.some(kw => taskText.includes(kw));
 
-  /**
-   * Create a new Phelan task manually.
-   */
-  const createPhelanTask = useCallback(
-    async (task: Partial<PhelanTask>): Promise<{ id: string } | null> => {
+      if (hasFinancialRisk && task.assignedTo === 'agent') {
+        return {
+          ...task,
+          status: 'paused_awaiting_confirmation' as TaskStatus,
+          legalRisk: 'medium' as const,
+          phelanConfirmed: false,
+        };
+      }
+
+      return { ...task, legalRisk: 'none' as const, phelanConfirmed: true };
+    });
+
+    // Track paused tasks
+    const pausedIds = validatedTasks
+      .filter(t => t.status === 'paused_awaiting_confirmation')
+      .map(t => t.id);
+
+    if (pausedIds.length > 0) {
+      setState(s => ({
+        ...s,
+        pausedTasks: [...s.pausedTasks, ...pausedIds],
+        phelanNotifications: [
+          ...s.phelanNotifications,
+          `${pausedIds.length} Task(s) pausiert — warten auf Bestaetigung`,
+        ],
+      }));
+    }
+
+    return validatedTasks;
+  }, []);
+
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 6: ACTION
+  // ═══════════════════════════════════════════════════════════════
+
+  const phaseAction = useCallback(async (tasks: HermesTask[]): Promise<void> => {
+    setState(s => ({ ...s, currentPhase: 'action', phaseNumber: 6 }));
+
+    for (const task of tasks) {
+      if (!isRunningRef.current) return;
+
+      // Skip paused tasks
+      if (task.status === 'paused_awaiting_confirmation') continue;
+      if (task.status === 'cancelled') continue;
+
+      // Execute task
       try {
-        setError(null);
-
-        const { data, error: insertError } = await supabase
-          .from('loop_phelan_tasks')
-          .insert({
-            title: task.title ?? 'Untitled Task',
+        if (task.assignedTo === 'phelan') {
+          // Create calendar entry for Phelan
+          await createCalendarEntry(task);
+        } else {
+          // Store in Supabase for agent execution
+          await supabase.from('loop_agent_tasks').insert({
+            title: task.title,
             description: task.description,
-            status: (task.status ?? 'pending') as PhelanTaskStatus,
-            priority: (task.priority ?? 'medium') as PhelanPriority,
-            due_date: task.dueDate,
-            hermes_reasoning: task.hermesReasoning,
-            source_cycle_id: currentCycle?.id ?? task.sourceCycleId,
-            related_task_id: task.relatedTaskId,
-            metadata: task.metadata ?? {},
-            created_by: task.createdBy,
-          })
-          .select('id')
-          .single();
-
-        if (insertError) {
-          setError(`Failed to create Phelan task: ${insertError.message}`);
-          return null;
+            prompt: `Hermes generated: ${task.description}`,
+            priority: task.priority,
+            status: 'queued',
+          });
         }
 
-        return { id: data.id as string };
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error creating Phelan task');
-        return null;
-      }
-    },
-    [currentCycle]
-  );
-
-  /**
-   * Mark a Phelan task notification as read.
-   */
-  const markPhelanTaskRead = useCallback(async (id: string): Promise<boolean> => {
-    try {
-      setError(null);
-
-      const { error: updateError } = await supabase
-        .from('loop_phelan_tasks')
-        .update({
-          notification_read: true,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id);
-
-      if (updateError) {
-        setError(`Failed to mark Phelan task read: ${updateError.message}`);
-        return false;
+        task.status = 'queued';
+      } catch {
+        task.status = 'failed';
       }
 
-      setActivePhelanTasks((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? { ...t, notificationRead: true, updatedAt: new Date().toISOString() }
-            : t
-        )
-      );
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error marking Phelan task');
-      return false;
+      await delay(200);
     }
   }, []);
 
-  // Initial fetch + Realtime subscriptions
-  useEffect(() => {
-    fetchCycles();
-    fetchPhelanTasks();
+  // ═══════════════════════════════════════════════════════════════
+  // PHASE 7: LEARNING
+  // ═══════════════════════════════════════════════════════════════
 
-    // Subscribe to brain cycle changes
-    cycleChannelRef.current = supabase
-      .channel('loop_hermes_brain_cycles_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'loop_hermes_brain_cycles',
-        },
-        (payload) => {
-          const cycle = mapRowToBrainCycle(payload.new as Record<string, unknown>);
+  const phaseLearning = useCallback(async (): Promise<string> => {
+    setState(s => ({ ...s, currentPhase: 'learning', phaseNumber: 7 }));
+    await delay(500);
 
-          if (payload.eventType === 'INSERT') {
-            setCycles((prev) => {
-              if (prev.some((c) => c.id === cycle.id)) return prev;
-              return [cycle, ...prev];
-            });
-            // If it's running, it becomes the current cycle
-            if (cycle.status === 'running') {
-              setCurrentCycle(cycle);
-              setIsRunning(true);
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            setCycles((prev) =>
-              prev.map((c) => (c.id === cycle.id ? cycle : c))
-            );
-            if (
-              currentCycle?.id === cycle.id ||
-              cycle.status === 'running' ||
-              cycle.status === 'paused'
-            ) {
-              setCurrentCycle(cycle);
-              setIsRunning(cycle.status === 'running');
-            }
-          }
-        }
-      )
-      .subscribe();
+    const cycleNum = cycleCountRef.current;
+    const learning = `Zyklus #${cycleNum} abgeschlossen. Performance: OK. ${cycleNum % 10 === 0 ? 'Zehn-Zyklen-Review empfohlen.' : ''}`;
 
-    // Subscribe to Phelan task changes
-    phelanChannelRef.current = supabase
-      .channel('loop_phelan_tasks_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'loop_phelan_tasks',
-        },
-        (payload) => {
-          const task = mapRowToPhelanTask(payload.new as Record<string, unknown>);
+    setState(s => ({ ...s, learning, cycleCount: cycleNum }));
+    return learning;
+  }, []);
 
-          if (payload.eventType === 'INSERT') {
-            setActivePhelanTasks((prev) => {
-              if (prev.some((t) => t.id === task.id)) return prev;
-              return [task, ...prev];
-            });
-          } else if (payload.eventType === 'UPDATE') {
-            setActivePhelanTasks((prev) =>
-              prev.map((t) => (t.id === task.id ? task : t))
-            );
-          } else if (payload.eventType === 'DELETE') {
-            setActivePhelanTasks((prev) =>
-              prev.filter(
-                (t) =>
-                  t.id !==
-                  (payload.old as unknown as { id: string }).id
-              )
-            );
-          }
-        }
-      )
-      .subscribe();
+  // ═══════════════════════════════════════════════════════════════
+  // MAIN CYCLE
+  // ═══════════════════════════════════════════════════════════════
 
-    return () => {
-      if (cycleChannelRef.current) {
-        supabase.removeChannel(cycleChannelRef.current);
-        cycleChannelRef.current = null;
+  const runCycle = useCallback(async () => {
+    if (!isRunningRef.current) return;
+
+    cycleCountRef.current += 1;
+    const cycleNum = cycleCountRef.current;
+
+    try {
+      // Phase 1: Observation
+      const observation = await phaseObservation();
+      if (!isRunningRef.current) return;
+
+      // Phase 2: Research
+      await phaseResearch();
+      if (!isRunningRef.current) return;
+
+      // Phase 3: Reasoning
+      const reasoning = await phaseReasoning(observation);
+      if (!isRunningRef.current) return;
+
+      // Phase 4: Planning
+      const newTasks = await phasePlanning(reasoning);
+      if (!isRunningRef.current) return;
+
+      // Phase 5: Validation
+      const validatedTasks = await phaseValidation(newTasks);
+      if (!isRunningRef.current) return;
+
+      // Phase 6: Action
+      await phaseAction(validatedTasks);
+      if (!isRunningRef.current) return;
+
+      // Phase 7: Learning
+      await phaseLearning();
+
+      // Update state with new tasks
+      setState(s => ({
+        ...s,
+        tasks: [...validatedTasks, ...s.tasks].slice(0, 100),
+        lastRunAt: new Date().toISOString(),
+        nextRunAt: new Date(Date.now() + CYCLE_INTERVAL_MS).toISOString(),
+        cycleCount: cycleNum,
+        currentPhase: 'idle',
+        phaseNumber: 0,
+      }));
+    } catch (error) {
+      setState(s => ({
+        ...s,
+        currentPhase: 'error',
+        errorMessage: error instanceof Error ? error.message : 'Zyklus-Fehler',
+      }));
+    }
+  }, [phaseObservation, phaseResearch, phaseReasoning, phasePlanning, phaseValidation, phaseAction, phaseLearning]);
+
+  // ═══════════════════════════════════════════════════════════════
+  // CONTROLS
+  // ═══════════════════════════════════════════════════════════════
+
+  const start = useCallback(() => {
+    if (intervalRef.current) clearTimeout(intervalRef.current);
+
+    setState(s => ({
+      ...s,
+      isRunning: true,
+      currentPhase: 'idle',
+      errorMessage: null,
+      nextRunAt: new Date(Date.now() + CYCLE_INTERVAL_MS).toISOString(),
+    }));
+
+    isRunningRef.current = true;
+
+    // Run immediately, then schedule next
+    runCycle();
+    intervalRef.current = setInterval(() => {
+      if (isRunningRef.current) {
+        runCycle();
       }
-      if (phelanChannelRef.current) {
-        supabase.removeChannel(phelanChannelRef.current);
-        phelanChannelRef.current = null;
+    }, CYCLE_INTERVAL_MS);
+  }, [runCycle]);
+
+  const stop = useCallback(() => {
+    isRunningRef.current = false;
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    setState(s => ({
+      ...s,
+      isRunning: false,
+      currentPhase: 'idle',
+      phaseNumber: 0,
+    }));
+  }, []);
+
+  const pause = useCallback(() => {
+    isRunningRef.current = false;
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    setState(s => ({ ...s, isRunning: false, currentPhase: 'paused' }));
+  }, []);
+
+  const resume = useCallback(() => {
+    start();
+  }, [start]);
+
+  const confirmTask = useCallback((taskId: string) => {
+    setState(s => ({
+      ...s,
+      tasks: s.tasks.map(t =>
+        t.id === taskId
+          ? { ...t, status: 'queued' as TaskStatus, phelanConfirmed: true, legalRisk: 'none' as const }
+          : t
+      ),
+      pausedTasks: s.pausedTasks.filter(id => id !== taskId),
+    }));
+  }, []);
+
+  const cancelTask = useCallback((taskId: string) => {
+    setState(s => ({
+      ...s,
+      tasks: s.tasks.map(t =>
+        t.id === taskId ? { ...t, status: 'cancelled' as TaskStatus } : t
+      ),
+      pausedTasks: s.pausedTasks.filter(id => id !== taskId),
+    }));
+  }, []);
+
+  const overridePhase = useCallback((phase: HermesPhase) => {
+    setState(s => ({ ...s, currentPhase: phase, overrideActive: true }));
+  }, []);
+
+  const clearNotifications = useCallback(() => {
+    setState(s => ({ ...s, phelanNotifications: [] }));
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
       }
     };
-  }, [fetchCycles, fetchPhelanTasks, currentCycle?.id]);
+  }, []);
 
   return {
-    currentCycle,
-    cycles,
-    isRunning,
-    isLoading,
-    error,
-    activePhelanTasks,
-    startCycle,
-    pauseCycle,
-    resumeCycle,
-    getPhaseStatus,
-    createPhelanTask,
-    markPhelanTaskRead,
-    refreshCycles: fetchCycles,
-    refreshPhelanTasks: fetchPhelanTasks,
+    ...state,
+    start,
+    stop,
+    pause,
+    resume,
+    confirmTask,
+    cancelTask,
+    overridePhase,
+    clearNotifications,
   };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+function delay(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function createCalendarEntry(task: HermesTask): Promise<void> {
+  try {
+    await supabase.from('loop_appointments').insert({
+      title: `[Hermes] ${task.title}`,
+      description: task.description,
+      appointment_type: 'reminder',
+      start_time: new Date(Date.now() + 3600000).toISOString(), // +1h
+      status: 'scheduled',
+    });
+    task.calendarEventId = task.id;
+  } catch {
+    // Offline mode — task stays queued
+  }
 }

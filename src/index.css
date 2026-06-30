@@ -1,0 +1,173 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.75rem;
+    --bg-primary: #000000;
+    --bg-secondary: #0C0D0F;
+    --bg-tertiary: #141518;
+    --bg-quaternary: #1B1D20;
+    --text-primary: #FFFFFF;
+    --text-secondary: #A1A4AA;
+    --text-muted: #5E626A;
+    --accent-orange: #FF8C5A;
+    --accent-purple: #B98BFF;
+    --status-teal: #36CFC9;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: #000000;
+    color: #FFFFFF;
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+    padding: 0;
+    min-height: 100dvh;
+  }
+
+  /* Reset link colors */
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0C0D0F;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1B1D20;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #2A2D32;
+  }
+
+  /* Selection color */
+  ::selection {
+    background: rgba(255, 140, 90, 0.3);
+    color: white;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ANT TRAIL ANIMATIONS — Agent Swarm Canvas
+   ═══════════════════════════════════════════════════════════════ */
+
+@layer utilities {
+  /* Marching ants stroke animation */
+  .ant-march {
+    animation: antMarch 2s linear infinite;
+  }
+
+  @keyframes antMarch {
+    to {
+      stroke-dashoffset: -24;
+    }
+  }
+
+  /* Ant crawl animations — multiple dots at different phases */
+  .ant-crawl-1 {
+    animation: antCrawl1 3s linear infinite;
+    offset-distance: 0%;
+  }
+
+  .ant-crawl-2 {
+    animation: antCrawl2 2.4s linear infinite;
+    offset-distance: 0%;
+  }
+
+  .ant-crawl-3 {
+    animation: antCrawl3 1.8s linear infinite;
+    offset-distance: 0%;
+  }
+
+  @keyframes antCrawl1 {
+    0% { offset-distance: 0%; }
+    100% { offset-distance: 100%; }
+  }
+
+  @keyframes antCrawl2 {
+    0% { offset-distance: 33%; }
+    100% { offset-distance: 133%; }
+  }
+
+  @keyframes antCrawl3 {
+    0% { offset-distance: 66%; }
+    100% { offset-distance: 166%; }
+  }
+
+  /* MainBrain pulsing glow */
+  @keyframes mainBrainPulse {
+    0%, 100% {
+      box-shadow: 0 0 20px rgba(255,140,90,0.2), inset 0 0 15px rgba(255,140,90,0.03);
+    }
+    50% {
+      box-shadow: 0 0 35px rgba(255,140,90,0.35), inset 0 0 25px rgba(255,140,90,0.06);
+    }
+  }
+
+  /* Fade in/out for LIVE indicator */
+  @keyframes fadeInOut {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+  }
+
+  /* Status dot pulse */
+  @keyframes pulseGlow {
+    0%, 100% {
+      box-shadow: 0 0 4px currentColor;
+      opacity: 1;
+    }
+    50% {
+      box-shadow: 0 0 8px currentColor;
+      opacity: 0.8;
+    }
+  }
+
+  /* React Flow overrides for dark theme */
+  .react-flow__controls button {
+    background-color: #0C0D0F !important;
+    color: #A1A4AA !important;
+    border-color: rgba(255,255,255,0.08) !important;
+  }
+
+  .react-flow__controls button:hover {
+    background-color: #141518 !important;
+    color: #FFFFFF !important;
+  }
+
+  .react-flow__controls svg {
+    fill: currentColor !important;
+  }
+
+  .react-flow__minimap {
+    background-color: #0C0D0F !important;
+  }
+
+  .react-flow__attribution {
+    display: none !important;
+  }
+
+  /* Edge selection */
+  .react-flow__edge.selected .react-flow__edge-path {
+    stroke: #FF8C5A !important;
+    stroke-width: 3 !important;
+  }
+
+  /* Node selection ring */
+  .react-flow__node.selected {
+    z-index: 10 !important;
+  }
+}

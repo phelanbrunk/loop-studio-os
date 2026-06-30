@@ -23,16 +23,23 @@ export function useAuth(): AuthState & AuthActions {
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
+    // Check active session
     supabase.auth.getSession().then(({ data }) => {
       setUser(data.session?.user ?? null);
-      if (data.session?.user) checkAdmin(data.session.user.id);
+      if (data.session?.user) {
+        checkAdmin(data.session.user.id);
+      }
       setIsLoading(false);
     });
 
+    // Listen for auth changes
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null);
-      if (session?.user) checkAdmin(session.user.id);
-      else setIsAdmin(false);
+      if (session?.user) {
+        checkAdmin(session.user.id);
+      } else {
+        setIsAdmin(false);
+      }
     });
 
     return () => listener.subscription.unsubscribe();
@@ -40,9 +47,15 @@ export function useAuth(): AuthState & AuthActions {
 
   const checkAdmin = async (userId: string) => {
     try {
-      const { data } = await supabase.from('loop_profiles').select('role').eq('id', userId).single();
+      const { data } = await supabase
+        .from('loop_profiles')
+        .select('role')
+        .eq('id', userId)
+        .single();
       setIsAdmin(data?.role === 'admin');
-    } catch { setIsAdmin(false); }
+    } catch {
+      setIsAdmin(false);
+    }
   };
 
   const login = useCallback(async (email: string, password: string) => {
@@ -52,7 +65,8 @@ export function useAuth(): AuthState & AuthActions {
 
   const register = useCallback(async (email: string, password: string, fullName: string) => {
     const { error } = await supabase.auth.signUp({
-      email, password,
+      email,
+      password,
       options: { data: { full_name: fullName } },
     });
     return { error };
@@ -78,5 +92,15 @@ export function useAuth(): AuthState & AuthActions {
     return { error };
   }, []);
 
-  return { user, isLoading, isAuthenticated: !!user, isAdmin, login, register, logout, signInWithGoogle, resetPassword };
+  return {
+    user,
+    isLoading,
+    isAuthenticated: !!user,
+    isAdmin,
+    login,
+    register,
+    logout,
+    signInWithGoogle,
+    resetPassword,
+  };
 }

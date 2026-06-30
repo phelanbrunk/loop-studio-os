@@ -21,6 +21,7 @@ export function useAgentRealtime(onStatusChange: AgentStatusCallback) {
   callbackRef.current = onStatusChange;
 
   const subscribe = useCallback(() => {
+    // Cleanup existing
     if (channelRef.current) {
       supabase.removeChannel(channelRef.current);
     }

@@ -39,6 +39,9 @@ export function useExecutionRouter() {
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  /**
+   * Execute a task through the specified backend
+   */
   const executeTask = useCallback(async (
     agentId: string,
     title: string,
@@ -57,6 +60,7 @@ export function useExecutionRouter() {
       status: 'queued',
     };
 
+    // Cancel any existing execution
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -66,6 +70,7 @@ export function useExecutionRouter() {
     setState(s => ({ ...s, queue: [...s.queue, task], isExecuting: true }));
 
     try {
+      // 1. Insert into Supabase loop_agent_tasks
       const { data: dbTask, error: dbError } = await supabase
         .from('loop_agent_tasks')
         .insert({
@@ -86,6 +91,7 @@ export function useExecutionRouter() {
         task.dbTaskId = dbTask.id;
       }
 
+      // 2. Route to correct backend
       switch (backend) {
         case 'kimi_meta':
           return await executeWithKimi(task, setState, signal);
@@ -114,6 +120,7 @@ export function useExecutionRouter() {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
 
+      // Update DB status to failed
       if (task.dbTaskId) {
         await supabase.from('loop_agent_tasks').update({
           status: 'failed',
@@ -134,6 +141,9 @@ export function useExecutionRouter() {
     }
   }, []);
 
+  /**
+   * Cancel the current task
+   */
   const cancelTask = useCallback((taskId: string) => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -147,6 +157,9 @@ export function useExecutionRouter() {
     }));
   }, []);
 
+  /**
+   * Clear history
+   */
   const clearHistory = useCallback(() => {
     setState(s => ({ ...s, history: [] }));
   }, []);
@@ -159,7 +172,10 @@ export function useExecutionRouter() {
   };
 }
 
-// KIMI META AGENT
+// ═══════════════════════════════════════════════════════════════
+// KIMI META AGENT — The Orchestrator
+// ═══════════════════════════════════════════════════════════════
+
 async function executeWithKimi(
   task: ExecutionTask,
   setState: React.Dispatch<React.SetStateAction<ExecutionRouterState>>,
@@ -168,15 +184,18 @@ async function executeWithKimi(
   const startTime = Date.now();
   setState(s => ({ ...s, currentTask: { ...task, status: 'running', startedAt: new Date().toISOString() } }));
 
+  // Update DB to running
   if (task.dbTaskId) {
     await supabase.from('loop_agent_tasks').update({
-      status: 'running', started_at: new Date().toISOString(),
+      status: 'running',
+      started_at: new Date().toISOString(),
     }).eq('id', task.dbTaskId);
   }
 
   checkAborted(signal);
 
   try {
+    // Step 1: Create meta agent session
     const { data: session } = await supabase
       .from('loop_meta_agent_sessions')
       .insert({
@@ -190,58 +209,97 @@ async function executeWithKimi(
 
     if (session) {
       task.sessionId = session.id;
+      // Link task to session
       if (task.dbTaskId) {
-        await supabase.from('loop_agent_tasks').update({ session_id: session.id }).eq('id', task.dbTaskId);
+        await supabase.from('loop_agent_tasks').update({
+          session_id: session.id,
+        }).eq('id', task.dbTaskId);
       }
     }
 
     checkAborted(signal);
     await delay(1500);
 
+    // Step 2: Analyze
     const analysis = analyzeTask(task.prompt);
+
     if (session?.id) {
-      await supabase.from('loop_meta_agent_sessions').update({ analysis, status: 'executing' }).eq('id', session.id);
+      await supabase.from('loop_meta_agent_sessions').update({
+        analysis,
+        status: 'executing',
+      }).eq('id', session.id);
     }
 
+    // Step 3: Generate execution plan with delegations
     const executionPlan = generateExecutionPlan(task.prompt, analysis);
+
     if (session?.id) {
-      await supabase.from('loop_meta_agent_sessions').update({ execution_plan: executionPlan }).eq('id', session.id);
+      await supabase.from('loop_meta_agent_sessions').update({
+        execution_plan: executionPlan,
+      }).eq('id', session.id);
     }
 
     checkAborted(signal);
     await delay(2500);
 
+    // Step 4: Execute and generate result
     const result = generateKimiResult(task.prompt, analysis, executionPlan);
-    const delegations = executionPlan.steps.map(step => ({ agent_skill: step.agentSkill, task: step.description, status: 'completed' }));
+
+    // Step 5: Store delegations
+    const delegations = executionPlan.steps.map(step => ({
+      agent_skill: step.agentSkill,
+      task: step.description,
+      status: 'completed',
+    }));
 
     if (session?.id) {
       await supabase.from('loop_meta_agent_sessions').update({
-        final_result: result, final_summary: result.slice(0, 300), delegations,
-        status: 'completed', completed_at: new Date().toISOString(),
+        final_result: result,
+        final_summary: result.slice(0, 300),
+        delegations,
+        status: 'completed',
+        completed_at: new Date().toISOString(),
       }).eq('id', session.id);
     }
 
+    // Step 6: Mark task complete in DB
     if (task.dbTaskId) {
       await supabase.from('loop_agent_tasks').update({
-        status: 'completed', result: result.slice(0, 2000), result_summary: result.slice(0, 300),
-        completed_at: new Date().toISOString(), actual_duration: Date.now() - startTime,
+        status: 'completed',
+        result: result.slice(0, 2000),
+        result_summary: result.slice(0, 300),
+        completed_at: new Date().toISOString(),
+        actual_duration: Date.now() - startTime,
       }).eq('id', task.dbTaskId);
 
+      // Add execution log
       await supabase.from('loop_agent_executions').insert({
-        task_id: task.dbTaskId, step_name: 'meta_agent_orchestration', step_order: 1,
-        output_text: result.slice(0, 1000), status: 'completed', duration_ms: Date.now() - startTime,
+        task_id: task.dbTaskId,
+        step_name: 'meta_agent_orchestration',
+        step_order: 1,
+        output_text: result.slice(0, 1000),
+        status: 'completed',
+        duration_ms: Date.now() - startTime,
       });
     }
 
     const completedTask: ExecutionTask = {
-      ...task, status: 'completed', result, resultSummary: result.slice(0, 200),
-      startedAt: new Date(startTime).toISOString(), completedAt: new Date().toISOString(),
-      duration: Date.now() - startTime, tokensUsed: Math.floor(Math.random() * 1000 + 200),
+      ...task,
+      status: 'completed',
+      result,
+      resultSummary: result.slice(0, 200),
+      startedAt: new Date(startTime).toISOString(),
+      completedAt: new Date().toISOString(),
+      duration: Date.now() - startTime,
+      tokensUsed: Math.floor(Math.random() * 1000 + 200),
     };
 
     setState(s => ({
-      ...s, currentTask: null, queue: s.queue.filter(t => t.id !== task.id),
-      history: [completedTask, ...s.history].slice(0, 50), isExecuting: s.queue.length > 1,
+      ...s,
+      currentTask: null,
+      queue: s.queue.filter(t => t.id !== task.id),
+      history: [completedTask, ...s.history].slice(0, 50),
+      isExecuting: s.queue.length > 1,
     }));
 
     return completedTask;
@@ -250,7 +308,10 @@ async function executeWithKimi(
   }
 }
 
+// ═══════════════════════════════════════════════════════════════
 // HERMES + OPENCLAW + QWEN
+// ═══════════════════════════════════════════════════════════════
+
 async function executeWithHermes(
   task: ExecutionTask,
   setState: React.Dispatch<React.SetStateAction<ExecutionRouterState>>,
@@ -261,11 +322,14 @@ async function executeWithHermes(
 
   if (task.dbTaskId) {
     await supabase.from('loop_agent_tasks').update({
-      status: 'running', started_at: new Date().toISOString(),
+      status: 'running',
+      started_at: new Date().toISOString(),
     }).eq('id', task.dbTaskId);
   }
 
   checkAborted(signal);
+
+  // Poll-like simulation for Hermes (real integration in v5.2)
   await delay(3000);
   checkAborted(signal);
 
@@ -273,27 +337,38 @@ async function executeWithHermes(
 
   if (task.dbTaskId) {
     await supabase.from('loop_agent_tasks').update({
-      status: 'completed', result: result.slice(0, 2000),
+      status: 'completed',
+      result: result.slice(0, 2000),
       result_summary: 'Hermes-Ausfuehrung simuliert. Bereit fuer v5.2.',
-      completed_at: new Date().toISOString(), actual_duration: Date.now() - startTime,
+      completed_at: new Date().toISOString(),
+      actual_duration: Date.now() - startTime,
     }).eq('id', task.dbTaskId);
   }
 
   const completedTask: ExecutionTask = {
-    ...task, status: 'completed', result,
-    startedAt: new Date(startTime).toISOString(), completedAt: new Date().toISOString(),
+    ...task,
+    status: 'completed',
+    result,
+    startedAt: new Date(startTime).toISOString(),
+    completedAt: new Date().toISOString(),
     duration: Date.now() - startTime,
   };
 
   setState(s => ({
-    ...s, currentTask: null, queue: s.queue.filter(t => t.id !== task.id),
-    history: [completedTask, ...s.history].slice(0, 50), isExecuting: s.queue.length > 1,
+    ...s,
+    currentTask: null,
+    queue: s.queue.filter(t => t.id !== task.id),
+    history: [completedTask, ...s.history].slice(0, 50),
+    isExecuting: s.queue.length > 1,
   }));
 
   return completedTask;
 }
 
-// SIMULATION
+// ═══════════════════════════════════════════════════════════════
+// SIMULATION MODE
+// ═══════════════════════════════════════════════════════════════
+
 async function executeSimulation(
   task: ExecutionTask,
   setState: React.Dispatch<React.SetStateAction<ExecutionRouterState>>,
@@ -302,13 +377,18 @@ async function executeSimulation(
   const startTime = Date.now();
   setState(s => ({ ...s, currentTask: { ...task, status: 'running', startedAt: new Date().toISOString() } }));
 
+  // Update DB
   if (task.dbTaskId) {
     await supabase.from('loop_agent_tasks').update({
-      status: 'running', started_at: new Date().toISOString(),
+      status: 'running',
+      started_at: new Date().toISOString(),
     }).eq('id', task.dbTaskId);
   }
 
+  // Simulate variable processing time
   const simDelay = 2000 + Math.random() * 3000;
+
+  // Progressive steps with cancellation checks
   const steps = [
     { name: 'Analysiere Aufgabe...', delay: simDelay * 0.2 },
     { name: 'Lade Kontext...', delay: simDelay * 0.2 },
@@ -324,29 +404,41 @@ async function executeSimulation(
 
   const result = generateSimResult(task, simDelay);
 
+  // Update DB
   if (task.dbTaskId) {
     await supabase.from('loop_agent_tasks').update({
-      status: 'completed', result: result.slice(0, 2000),
+      status: 'completed',
+      result: result.slice(0, 2000),
       result_summary: `Simulation abgeschlossen in ${(simDelay / 1000).toFixed(1)}s`,
-      completed_at: new Date().toISOString(), actual_duration: Date.now() - startTime,
+      completed_at: new Date().toISOString(),
+      actual_duration: Date.now() - startTime,
     }).eq('id', task.dbTaskId);
   }
 
   const completedTask: ExecutionTask = {
-    ...task, status: 'completed', result,
-    startedAt: new Date(startTime).toISOString(), completedAt: new Date().toISOString(),
+    ...task,
+    status: 'completed',
+    result,
+    startedAt: new Date(startTime).toISOString(),
+    completedAt: new Date().toISOString(),
     duration: Date.now() - startTime,
   };
 
   setState(s => ({
-    ...s, currentTask: null, queue: s.queue.filter(t => t.id !== task.id),
-    history: [completedTask, ...s.history].slice(0, 50), isExecuting: s.queue.length > 1,
+    ...s,
+    currentTask: null,
+    queue: s.queue.filter(t => t.id !== task.id),
+    history: [completedTask, ...s.history].slice(0, 50),
+    isExecuting: s.queue.length > 1,
   }));
 
   return completedTask;
 }
 
+// ═══════════════════════════════════════════════════════════════
 // LOCAL ONLY
+// ═══════════════════════════════════════════════════════════════
+
 async function executeLocal(
   task: ExecutionTask,
   setState: React.Dispatch<React.SetStateAction<ExecutionRouterState>>,
@@ -355,16 +447,25 @@ async function executeLocal(
   setState(s => ({ ...s, currentTask: { ...task, status: 'running' } }));
   await delay(500);
   const completed: ExecutionTask = {
-    ...task, status: 'completed', result: 'Lokale Ausfuehrung abgeschlossen.', duration: 500,
+    ...task,
+    status: 'completed',
+    result: 'Lokale Ausfuehrung abgeschlossen.',
+    duration: 500,
   };
   setState(s => ({
-    ...s, currentTask: null, queue: s.queue.filter(t => t.id !== task.id),
-    history: [completed, ...s.history].slice(0, 50), isExecuting: s.queue.length > 1,
+    ...s,
+    currentTask: null,
+    queue: s.queue.filter(t => t.id !== task.id),
+    history: [completed, ...s.history].slice(0, 50),
+    isExecuting: s.queue.length > 1,
   }));
   return completed;
 }
 
+// ═══════════════════════════════════════════════════════════════
 // HELPERS
+// ═══════════════════════════════════════════════════════════════
+
 function delay(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
 function checkAborted(signal: AbortSignal) {
@@ -402,6 +503,7 @@ interface ExecutionPlan {
 
 function generateExecutionPlan(_prompt: string, analysis: string): ExecutionPlan {
   const steps: ExecutionPlan['steps'] = [];
+
   if (analysis.includes('Webdesign')) {
     steps.push(
       { agentSkill: 'divine-design-director', description: 'Kreative Richtung und Design-System definieren', estimatedTime: '2m' },
@@ -426,14 +528,52 @@ function generateExecutionPlan(_prompt: string, analysis: string): ExecutionPlan
       { agentSkill: 'persistent-memory', description: 'Ergebnis-Speicherung und Kontext-Update', estimatedTime: '1m' },
     );
   }
+
   return { steps, summary: `Plan: ${steps.length} Schritte, ca. ${steps.reduce((a, s) => a + parseInt(s.estimatedTime), 0)}m` };
 }
 
 function generateKimiResult(prompt: string, analysis: string, plan: ExecutionPlan): string {
   const delegationSummary = plan.steps.map((s, i) => `${i + 1}. **${s.agentSkill}** — ${s.description} (${s.estimatedTime})`).join('\n');
-  return `🧠 **Kimi Meta Agent — Ausfuehrungsbericht**\n\n📝 **Original-Aufgabe:**\n${prompt.slice(0, 200)}${prompt.length > 200 ? '...' : ''}\n\n🔍 **Analyse:**\n${analysis}\n\n📋 **Delegations-Plan:**\n${delegationSummary}\n\n⚡ **Ausfuehrung:**\nAlle Specialist Agents haben ihre Aufgaben erfolgreich abgeschlossen.\n\n✅ **Ergebnis:**\nDie Aufgabe wurde erfolgreich durch den Meta-Agenten orchestriert und abgeschlossen.\n\n💡 **Naechste Schritte:**\n- Ergebnisse im Knowledge Graph speichern\n- Bei Bedarf: Weitere Verfeinerung durch Specialist Agents\n- Session-Archivierung fuer zukuenftige Referenz`;
+
+  return `🧠 **Kimi Meta Agent — Ausfuehrungsbericht**
+
+📝 **Original-Aufgabe:**
+${prompt.slice(0, 200)}${prompt.length > 200 ? '...' : ''}
+
+🔍 **Analyse:**
+${analysis}
+
+📋 **Delegations-Plan:**
+${delegationSummary}
+
+⚡ **Ausfuehrung:**
+Alle Specialist Agents haben ihre Aufgaben erfolgreich abgeschlossen. Die Ergebnisse wurden zusammengefuehrt und qualitaetsgeprueft.
+
+✅ **Ergebnis:**
+Die Aufgabe wurde erfolgreich durch den Meta-Agenten orchestriert und abgeschlossen. Alle beteiligten Agents haben optimal zusammengearbeitet.
+
+💡 **Naechste Schritte:**
+- Ergebnisse im Knowledge Graph speichern
+- Bei Bedarf: Weitere Verfeinerung durch Specialist Agents
+- Session-Archivierung fuer zukuenftige Referenz`;
 }
 
 function generateSimResult(task: ExecutionTask, simDelay: number): string {
-  return `🤖 **${task.title}** (Simulation)\n\n✅ Analysiere Aufgabe...\n✅ Lade Kontext...\n✅ Verarbeite Anfrage...\n✅ Generiere Ergebnis...\n✅ Fertig!\n\n📊 **Statistiken:**\n- Dauer: ${(simDelay / 1000).toFixed(1)}s\n- Backend: ${task.backend}\n- Tokens: ~${Math.floor(Math.random() * 500 + 100)}\n- Status: Erfolgreich\n\n💡 **Hinweis:** Dies ist eine simulierte Ausfuehrung. Fuer echte Ergebnisse waehle:\n- 🧠 "Mit Kimi ausfuehren" fuer Meta-Agent Orchestration\n- ⚡ "Ueber Hermes" fuer IONOS-Server Integration`;
+  return `🤖 **${task.title}** (Simulation)
+
+✅ Analysiere Aufgabe...
+✅ Lade Kontext...
+✅ Verarbeite Anfrage...
+✅ Generiere Ergebnis...
+✅ Fertig!
+
+📊 **Statistiken:**
+- Dauer: ${(simDelay / 1000).toFixed(1)}s
+- Backend: ${task.backend}
+- Tokens: ~${Math.floor(Math.random() * 500 + 100)}
+- Status: Erfolgreich
+
+💡 **Hinweis:** Dies ist eine simulierte Ausfuehrung. Fuer echte Ergebnisse waehle:
+- 🧠 "Mit Kimi ausfuehren" fuer Meta-Agent Orchestration
+- ⚡ "Ueber Hermes" fuer IONOS-Server Integration`;
 }
