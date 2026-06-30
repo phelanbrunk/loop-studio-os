@@ -29,7 +29,10 @@ import {
   Milestone,
   Calendar,
   FolderOpen,
+  BookOpen,
+  GitGraph,
 } from 'lucide-react';
+import { ObsidianVault } from '@/components/ObsidianVault';
 
 /* ================================================================== */
 /*  TYPES                                                              */
@@ -48,6 +51,8 @@ export interface GraphNode {
   content?: string;
   createdAt?: string;
   updatedAt?: string;
+  obsidianNoteId?: string | null;
+  vaultPath?: string | null;
 }
 
 export interface GraphEdge {
@@ -63,6 +68,9 @@ export interface Camera {
   x: number;
   y: number;
   zoom: number;
+  targetZoom?: number;
+  targetX?: number;
+  targetY?: number;
 }
 
 export type NodeType =
@@ -78,6 +86,8 @@ export type NodeType =
   | 'website';
 
 export type LayoutMode = 'force' | 'hierarchical' | 'circular' | 'grid';
+
+export type BrainTab = 'graph' | 'vault';
 
 /* ================================================================== */
 /*  CONSTANTS                                                          */
@@ -143,22 +153,22 @@ const PRIORITY_OPTIONS = ['hoch', 'mittel', 'niedrig'];
 /* ================================================================== */
 
 const MOCK_NODES: GraphNode[] = [
-  { id: '1', type: 'project', title: 'Balzereit Website', x: 0, y: 0, size: 2, tags: ['garten', 'website'], status: 'aktiv', priority: 'hoch', content: 'Neue Website f\u00fcr Gartenpflegeunternehmen.', createdAt: '2026-01-10', updatedAt: '2026-01-20' },
+  { id: '1', type: 'project', title: 'Balzereit Website', x: 0, y: 0, size: 2, tags: ['garten', 'website'], status: 'aktiv', priority: 'hoch', content: 'Neue Website für Gartenpflegeunternehmen.', createdAt: '2026-01-10', updatedAt: '2026-01-20' },
   { id: '2', type: 'client', title: 'Balzereit Gartenpflege', x: -100, y: -80, size: 2, tags: ['kunde'], status: 'aktiv', content: 'Stammkunde seit 2024.', createdAt: '2024-03-15', updatedAt: '2026-01-18' },
   { id: '3', type: 'project', title: 'IGZ 3D Schulung', x: 150, y: -50, size: 2, tags: ['3d', 'webapp'], status: 'aktiv', priority: 'mittel', content: '3D Schulungsplattform.', createdAt: '2026-01-05', updatedAt: '2026-01-22' },
   { id: '4', type: 'client', title: 'IGZ Wernigerode', x: 200, y: -120, size: 2, tags: ['kunde', 'immobilien'], status: 'aktiv', content: 'Immobilienzentrum.', createdAt: '2025-06-01', updatedAt: '2026-01-15' },
-  { id: '5', type: 'project', title: 'Spindler Berlin', x: -50, y: 120, size: 1, tags: ['landingpage'], status: 'in_planung', priority: 'mittel', content: 'Landing Page f\u00fcr Dachdecker.', createdAt: '2026-01-12', updatedAt: '2026-01-12' },
+  { id: '5', type: 'project', title: 'Spindler Berlin', x: -50, y: 120, size: 1, tags: ['landingpage'], status: 'in_planung', priority: 'mittel', content: 'Landing Page für Dachdecker.', createdAt: '2026-01-12', updatedAt: '2026-01-12' },
   { id: '6', type: 'client', title: 'Spindler GmbH', x: -150, y: 150, size: 2, tags: ['kunde', 'dachdecker'], status: 'aktiv', content: 'Dachdeckerfirma Berlin.', createdAt: '2025-08-20', updatedAt: '2026-01-10' },
-  { id: '7', type: 'project', title: 'Jankel Voges Web', x: 80, y: 100, size: 2, tags: ['corporate'], status: 'aktiv', priority: 'hoch', content: 'Corporate Website f\u00fcr Bauunternehmen.', createdAt: '2026-01-08', updatedAt: '2026-01-25' },
+  { id: '7', type: 'project', title: 'Jankel Voges Web', x: 80, y: 100, size: 2, tags: ['corporate'], status: 'aktiv', priority: 'hoch', content: 'Corporate Website für Bauunternehmen.', createdAt: '2026-01-08', updatedAt: '2026-01-25' },
   { id: '8', type: 'client', title: 'Jankel & Voges Bau', x: 150, y: 180, size: 2, tags: ['kunde', 'bau'], status: 'aktiv', content: 'Bauunternehmen.', createdAt: '2025-04-10', updatedAt: '2026-01-20' },
   { id: '9', type: 'note', title: 'Design System v2', x: -200, y: 0, size: 1, tags: ['design'], status: 'aktiv', content: 'Farben, Typografie, Komponenten.', createdAt: '2025-12-01', updatedAt: '2026-01-15' },
-  { id: '10', type: 'idea', title: 'AI Chat Integration', x: 250, y: 50, size: 1, tags: ['ki', 'feature'], status: 'in_planung', content: 'KI-Chatbot f\u00fcr Kunden.', createdAt: '2026-01-20', updatedAt: '2026-01-20' },
-  { id: '11', type: 'note', title: 'Kunden-Call Notizen', x: 0, y: -150, size: 1, tags: ['notizen'], status: 'aktiv', content: 'Notizen vom letzten Kundengespr\u00e4ch.', createdAt: '2026-01-18', updatedAt: '2026-01-18' },
-  { id: '12', type: 'task', title: 'Logo finalisieren', x: 100, y: -180, size: 1, tags: ['design'], status: 'aktiv', priority: 'hoch', content: 'Logo f\u00fcr Balzereit fertigstellen.', createdAt: '2026-01-15', updatedAt: '2026-01-19' },
-  { id: '13', type: 'idea', title: 'Mobile App Idee', x: -120, y: 80, size: 1, tags: ['mobile'], status: 'in_planung', content: 'App f\u00fcr Projektmanagement.', createdAt: '2026-01-22', updatedAt: '2026-01-22' },
+  { id: '10', type: 'idea', title: 'AI Chat Integration', x: 250, y: 50, size: 1, tags: ['ki', 'feature'], status: 'in_planung', content: 'KI-Chatbot für Kunden.', createdAt: '2026-01-20', updatedAt: '2026-01-20' },
+  { id: '11', type: 'note', title: 'Kunden-Call Notizen', x: 0, y: -150, size: 1, tags: ['notizen'], status: 'aktiv', content: 'Notizen vom letzten Kundengespräch.', createdAt: '2026-01-18', updatedAt: '2026-01-18' },
+  { id: '12', type: 'task', title: 'Logo finalisieren', x: 100, y: -180, size: 1, tags: ['design'], status: 'aktiv', priority: 'hoch', content: 'Logo für Balzereit fertigstellen.', createdAt: '2026-01-15', updatedAt: '2026-01-19' },
+  { id: '13', type: 'idea', title: 'Mobile App Idee', x: -120, y: 80, size: 1, tags: ['mobile'], status: 'in_planung', content: 'App für Projektmanagement.', createdAt: '2026-01-22', updatedAt: '2026-01-22' },
   { id: '14', type: 'resource', title: 'Figma Library', x: 200, y: -200, size: 1, tags: ['tool'], status: 'aktiv', content: 'Gemeinsame Design-Bibliothek.', createdAt: '2025-10-01', updatedAt: '2026-01-10' },
-  { id: '15', type: 'project', title: 'H\u00fcber Portfolio', x: -180, y: -150, size: 1, tags: ['portfolio'], status: 'in_planung', priority: 'niedrig', content: 'Portfolio-Website.', createdAt: '2026-01-14', updatedAt: '2026-01-14' },
-  { id: '16', type: 'client', title: 'H\u00fcber Innenausbau', x: -250, y: -100, size: 1, tags: ['kunde'], status: 'aktiv', content: 'Innenausbau-Firma.', createdAt: '2025-09-01', updatedAt: '2026-01-05' },
+  { id: '15', type: 'project', title: 'Hüber Portfolio', x: -180, y: -150, size: 1, tags: ['portfolio'], status: 'in_planung', priority: 'niedrig', content: 'Portfolio-Website.', createdAt: '2026-01-14', updatedAt: '2026-01-14' },
+  { id: '16', type: 'client', title: 'Hüber Innenausbau', x: -250, y: -100, size: 1, tags: ['kunde'], status: 'aktiv', content: 'Innenausbau-Firma.', createdAt: '2025-09-01', updatedAt: '2026-01-05' },
   { id: '17', type: 'note', title: 'Preisliste 2026', x: 50, y: 200, size: 1, tags: ['preise'], status: 'aktiv', content: 'Aktualisierte Preisliste.', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
   { id: '18', type: 'website', title: 'Loop Studio Site', x: 0, y: 250, size: 2, tags: ['eigen'], status: 'aktiv', priority: 'hoch', content: 'Eigene Website.', createdAt: '2025-01-01', updatedAt: '2026-01-25' },
   { id: '19', type: 'milestone', title: '10. Kunde!', x: -80, y: -200, size: 1, tags: ['meilenstein'], status: 'aktiv', content: 'Zehn aktive Kunden erreicht!', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
@@ -166,21 +176,21 @@ const MOCK_NODES: GraphNode[] = [
 ];
 
 const MOCK_EDGES: GraphEdge[] = [
-  { id: 'e1', source: '1', target: '2', label: 'f\u00fcr', type: 'created_for', strength: 1.0 },
-  { id: 'e2', source: '3', target: '4', label: 'f\u00fcr', type: 'created_for', strength: 1.0 },
-  { id: 'e3', source: '5', target: '6', label: 'f\u00fcr', type: 'created_for', strength: 1.0 },
-  { id: 'e4', source: '7', target: '8', label: 'f\u00fcr', type: 'created_for', strength: 1.0 },
-  { id: 'e5', source: '15', target: '16', label: 'f\u00fcr', type: 'created_for', strength: 1.0 },
+  { id: 'e1', source: '1', target: '2', label: 'für', type: 'created_for', strength: 1.0 },
+  { id: 'e2', source: '3', target: '4', label: 'für', type: 'created_for', strength: 1.0 },
+  { id: 'e3', source: '5', target: '6', label: 'für', type: 'created_for', strength: 1.0 },
+  { id: 'e4', source: '7', target: '8', label: 'für', type: 'created_for', strength: 1.0 },
+  { id: 'e5', source: '15', target: '16', label: 'für', type: 'created_for', strength: 1.0 },
   { id: 'e6', source: '1', target: '3', label: 'verwandt', type: 'related', strength: 0.5 },
   { id: 'e7', source: '9', target: '1', label: 'genutzt', type: 'references', strength: 0.7 },
   { id: 'e8', source: '9', target: '5', label: 'genutzt', type: 'references', strength: 0.6 },
   { id: 'e9', source: '10', target: '18', label: 'inspiriert', type: 'inspired_by', strength: 0.8 },
-  { id: 'e10', source: '12', target: '1', label: 'f\u00fcr', type: 'created_for', strength: 0.9 },
-  { id: 'e11', source: '11', target: '2', label: '\u00fcber', type: 'mentions', strength: 0.6 },
+  { id: 'e10', source: '12', target: '1', label: 'für', type: 'created_for', strength: 0.9 },
+  { id: 'e11', source: '11', target: '2', label: 'über', type: 'mentions', strength: 0.6 },
   { id: 'e12', source: '13', target: '10', label: 'verwandt', type: 'related', strength: 0.5 },
-  { id: 'e13', source: '14', target: '9', label: 'enth\u00e4lt', type: 'parent_of', strength: 0.8 },
-  { id: 'e14', source: '14', target: '12', label: 'enth\u00e4lt', type: 'parent_of', strength: 0.8 },
-  { id: 'e15', source: '17', target: '2', label: 'f\u00fcr', type: 'belongs_to', strength: 0.7 },
+  { id: 'e13', source: '14', target: '9', label: 'enthält', type: 'parent_of', strength: 0.8 },
+  { id: 'e14', source: '14', target: '12', label: 'enthält', type: 'parent_of', strength: 0.8 },
+  { id: 'e15', source: '17', target: '2', label: 'für', type: 'belongs_to', strength: 0.7 },
   { id: 'e16', source: '18', target: '9', label: 'nutzt', type: 'references', strength: 0.6 },
   { id: 'e17', source: '19', target: '2', label: 'feiert', type: 'mentions', strength: 0.4 },
   { id: 'e18', source: '20', target: '1', label: 'zu', type: 'related', strength: 0.5 },
@@ -188,14 +198,14 @@ const MOCK_EDGES: GraphEdge[] = [
 ];
 
 /* ================================================================== */
-/*  PHYSICS ENGINE                                                     */
+/*  PHYSICS ENGINE — FINER TUNING                                      */
 /* ================================================================== */
 
 function applyForces(nodes: GraphNode[], edges: GraphEdge[]) {
-  const repulsionStrength = 4000;
+  const repulsionStrength = 2500; // reduced from 4000 — nodes stay closer
   const attractionStrength = 0.004;
   const springLength = 140;
-  const centerStrength = 0.015;
+  const centerStrength = 0.025; // increased from 0.015 — stronger gravity
 
   // Repulsion (Coulomb-like)
   for (let i = 0; i < nodes.length; i++) {
@@ -294,7 +304,6 @@ function applyGridLayout(nodes: GraphNode[]) {
 }
 
 function applyHierarchicalLayout(nodes: GraphNode[]) {
-  // Sort by type then place in levels
   const levels: Record<string, number> = {
     client: 0, website: 0, resource: 0,
     project: 1, milestone: 1,
@@ -322,8 +331,31 @@ function applyHierarchicalLayout(nodes: GraphNode[]) {
 }
 
 /* ================================================================== */
-/*  RENDERER                                                           */
+/*  RENDERER — ENHANCED VISUALS                                       */
 /* ================================================================== */
+
+/** Easing for smooth zoom transitions */
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+/** Smooth camera update with easing */
+function smoothCamera(camera: Camera, lerpFactor: number): Camera {
+  if (camera.targetZoom !== undefined && camera.targetX !== undefined && camera.targetY !== undefined) {
+    const newZoom = lerp(camera.zoom, camera.targetZoom, lerpFactor);
+    const newX = lerp(camera.x, camera.targetX, lerpFactor);
+    const newY = lerp(camera.y, camera.targetY, lerpFactor);
+    // Stop lerp when close enough
+    const isSettled = Math.abs(newZoom - camera.targetZoom) < 0.001 && Math.abs(newX - camera.targetX) < 0.5 && Math.abs(newY - camera.targetY) < 0.5;
+    if (isSettled) {
+      return { x: camera.targetX, y: camera.targetY, zoom: camera.targetZoom };
+    }
+    return { x: newX, y: newY, zoom: newZoom, targetZoom: camera.targetZoom, targetX: camera.targetX, targetY: camera.targetY };
+  }
+  return camera;
+}
+
+let pulsePhase = 0;
 
 function renderGraph(
   ctx: CanvasRenderingContext2D,
@@ -335,6 +367,7 @@ function renderGraph(
   hoveredId: string | null,
   selectedId: string | null,
   searchQuery: string,
+  time: number,
 ) {
   const dpr = window.devicePixelRatio || 1;
   ctx.save();
@@ -344,8 +377,8 @@ function renderGraph(
   ctx.fillStyle = '#000000';
   ctx.fillRect(0, 0, width, height);
 
-  // Subtle grid
-  ctx.strokeStyle = 'rgba(255,255,255,0.015)';
+  // Subtle grid — even more subtle
+  ctx.strokeStyle = 'rgba(255,255,255,0.008)';
   ctx.lineWidth = 0.5;
   const gridSize = 50 * camera.zoom;
   const offsetX = (width / 2 + camera.x) % gridSize;
@@ -381,95 +414,194 @@ function renderGraph(
       : nodes.map(n => n.id),
   );
 
-  // Draw edges first
+  // Which edges are connected to hovered/selected?
+  const connectedEdgeIds = new Set<string>();
+  if (hoveredId || selectedId) {
+    const activeId = hoveredId || selectedId;
+    edges.forEach(edge => {
+      if (edge.source === activeId || edge.target === activeId) {
+        connectedEdgeIds.add(edge.id);
+      }
+    });
+  }
+
+  // Draw edges first (as smooth Bézier curves)
   edges.forEach(edge => {
     const source = nodes.find(n => n.id === edge.source);
     const target = nodes.find(n => n.id === edge.target);
     if (!source || !target) return;
 
     const isDimmed = searchQuery && (!filteredNodeIds.has(source.id) || !filteredNodeIds.has(target.id));
-    const isHighlighted =
-      (hoveredId && (source.id === hoveredId || target.id === hoveredId)) ||
-      (selectedId && (source.id === selectedId || target.id === selectedId));
+    const isConnected = connectedEdgeIds.has(edge.id);
+    const isHighlighted = isConnected;
+
+    // Calculate control point for quadratic bezier
+    const mx = (source.x + target.x) / 2;
+    const my = (source.y + target.y) / 2;
+    // Offset control point perpendicular to edge for slight curve
+    const dx = target.x - source.x;
+    const dy = target.y - source.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const perpX = -dy / len;
+    const perpY = dx / len;
+    const curveAmount = Math.min(len * 0.08, 12);
+    const cx = mx + perpX * curveAmount;
+    const cy = my + perpY * curveAmount;
 
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
-    ctx.lineTo(target.x, target.y);
+    ctx.quadraticCurveTo(cx, cy, target.x, target.y);
 
     if (isDimmed) {
       ctx.strokeStyle = 'rgba(255,255,255,0.03)';
       ctx.lineWidth = 0.5;
     } else if (isHighlighted) {
-      ctx.strokeStyle = `rgba(255,140,90,${edge.strength * 0.5})`;
-      ctx.lineWidth = 1.5 + edge.strength;
+      // Warm orange glow on hover
+      ctx.strokeStyle = `rgba(255,140,90,${edge.strength * 0.65})`;
+      ctx.lineWidth = 2 + edge.strength;
+      ctx.shadowColor = 'rgba(255,140,90,0.3)';
+      ctx.shadowBlur = 8;
     } else {
-      ctx.strokeStyle = `rgba(255,255,255,${edge.strength * 0.12})`;
-      ctx.lineWidth = 0.8 + edge.strength * 0.8;
+      ctx.strokeStyle = `rgba(255,255,255,${edge.strength * 0.1})`;
+      ctx.lineWidth = 1.2 + edge.strength * 0.6;
+      ctx.shadowBlur = 0;
     }
     ctx.stroke();
+    ctx.shadowBlur = 0; // reset
 
-    // Edge label at midpoint
-    if (!isDimmed && camera.zoom > 0.6) {
-      const mx = (source.x + target.x) / 2;
-      const my = (source.y + target.y) / 2;
-      ctx.fillStyle = isHighlighted ? 'rgba(255,140,90,0.8)' : '#5E626A';
-      ctx.font = `${isHighlighted ? '600' : '400'} 10px "DM Sans", sans-serif`;
+    // Edge label at midpoint — only when zoomed in
+    if (!isDimmed && camera.zoom > 0.7) {
+      const t = 0.5;
+      // Point on quadratic bezier
+      const labelX = (1 - t) * (1 - t) * source.x + 2 * (1 - t) * t * cx + t * t * target.x;
+      const labelY = (1 - t) * (1 - t) * source.y + 2 * (1 - t) * t * cy + t * t * target.y;
+
+      ctx.fillStyle = isHighlighted ? 'rgba(255,140,90,0.85)' : 'rgba(94,98,106,0.7)';
+      ctx.font = `${isHighlighted ? '600' : '400'} 9px "IBM Plex Mono", monospace`;
       ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(edge.label, mx, my - 4);
+      ctx.textBaseline = 'middle';
+      // Tiny background pill for readability
+      const textMetrics = ctx.measureText(edge.label);
+      const pillW = textMetrics.width + 8;
+      const pillH = 14;
+      ctx.save();
+      ctx.fillStyle = 'rgba(12,13,15,0.7)';
+      ctx.beginPath();
+      ctx.roundRect(labelX - pillW / 2, labelY - pillH / 2, pillW, pillH, 4);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.fillStyle = isHighlighted ? 'rgba(255,140,90,0.85)' : 'rgba(94,98,106,0.7)';
+      ctx.fillText(edge.label, labelX, labelY);
     }
   });
 
+  // Update pulse phase for selected nodes
+  pulsePhase = (time / 1000) * 2; // ~2 rad/sec
+
   // Draw nodes
   nodes.forEach(node => {
-    const r = 8 + node.size * 5;
+    const baseR = 8 + node.size * 5;
     const color = NODE_COLORS[node.type] || '#FFFFFF';
     const isHovered = node.id === hoveredId;
     const isSelected = node.id === selectedId;
     const isDimmed = searchQuery && !filteredNodeIds.has(node.id);
     const isHighlighted = isHovered || isSelected;
 
-    // Glow for selected/hovered
-    if (isHighlighted && !isDimmed) {
+    // Scale factor for hover animation
+    const hoverScale = isHovered ? 1.15 : 1.0;
+    const r = baseR * hoverScale;
+
+    // ── GLOW ──
+    if (!isDimmed) {
+      // Inner soft glow — always present
       ctx.beginPath();
-      ctx.arc(node.x, node.y, r + 14, 0, Math.PI * 2);
-      const gradient = ctx.createRadialGradient(node.x, node.y, r, node.x, node.y, r + 14);
-      gradient.addColorStop(0, color + '25');
-      gradient.addColorStop(1, 'transparent');
-      ctx.fillStyle = gradient;
+      ctx.arc(node.x, node.y, r + 10, 0, Math.PI * 2);
+      const innerGlow = ctx.createRadialGradient(node.x, node.y, r * 0.3, node.x, node.y, r + 10);
+      innerGlow.addColorStop(0, color + '20');
+      innerGlow.addColorStop(1, 'transparent');
+      ctx.fillStyle = innerGlow;
       ctx.fill();
+
+      // Pulsing outer ring for selected
+      if (isSelected) {
+        const pulseR = r + 16 + Math.sin(pulsePhase) * 3;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, pulseR, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,140,90,${0.25 + Math.sin(pulsePhase) * 0.12})`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // Secondary faint pulse ring
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, pulseR + 6, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(255,140,90,${0.08 + Math.sin(pulsePhase + 1) * 0.05})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+
+      // Stronger glow on hover
+      if (isHovered) {
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, r + 18, 0, Math.PI * 2);
+        const hoverGlow = ctx.createRadialGradient(node.x, node.y, r, node.x, node.y, r + 18);
+        hoverGlow.addColorStop(0, color + '35');
+        hoverGlow.addColorStop(1, 'transparent');
+        ctx.fillStyle = hoverGlow;
+        ctx.fill();
+      }
     }
 
-    // Node circle
+    // ── NODE CIRCLE ──
     ctx.beginPath();
     ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
     if (isDimmed) {
       ctx.fillStyle = color + '08';
-      ctx.strokeStyle = color + '20';
+      ctx.strokeStyle = color + '15';
+      ctx.lineWidth = 1;
     } else {
-      ctx.fillStyle = isHighlighted ? color + '30' : color + '18';
-      ctx.strokeStyle = isHighlighted ? color : color + 'AA';
+      // Soft filled circle with radial gradient
+      const nodeGrad = ctx.createRadialGradient(node.x, node.y, 0, node.x, node.y, r);
+      if (isHighlighted) {
+        nodeGrad.addColorStop(0, color + '50');
+        nodeGrad.addColorStop(0.7, color + '28');
+        nodeGrad.addColorStop(1, color + '10');
+      } else {
+        nodeGrad.addColorStop(0, color + '30');
+        nodeGrad.addColorStop(0.7, color + '15');
+        nodeGrad.addColorStop(1, color + '05');
+      }
+      ctx.fillStyle = nodeGrad;
+      ctx.strokeStyle = isHighlighted ? color + 'DD' : color + '66';
+      ctx.lineWidth = isHighlighted ? 2.2 : 1.3;
     }
-    ctx.lineWidth = isHighlighted ? 2.5 : 1.5;
     ctx.fill();
     ctx.stroke();
 
-    // Inner dot
+    // ── INNER DOT ──
     ctx.beginPath();
-    ctx.arc(node.x, node.y, isHighlighted ? 3 : 2, 0, Math.PI * 2);
-    ctx.fillStyle = isDimmed ? color + '30' : color;
+    const innerDotR = isHighlighted ? 3.5 : 2.5;
+    ctx.arc(node.x, node.y, innerDotR, 0, Math.PI * 2);
+    ctx.fillStyle = isDimmed ? color + '20' : color;
+    // Soft glow around inner dot
+    if (!isDimmed && isHighlighted) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 6;
+    }
     ctx.fill();
+    ctx.shadowBlur = 0;
 
-    // Label
+    // ── LABEL ──
     if (!isDimmed && camera.zoom > 0.3) {
-      ctx.fillStyle = isHighlighted ? '#FFFFFF' : '#A1A4AA';
-      ctx.font = `${isHighlighted ? '600' : '500'} 12px "DM Sans", sans-serif`;
+      const labelY = node.y + r + 12;
+      ctx.fillStyle = isSelected ? '#FFFFFF' : isHovered ? '#E8E9EC' : '#A1A4AA';
+      ctx.font = `${isSelected ? '600' : isHovered ? '500' : '400'} 12px "DM Sans", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
 
       // Truncate label if too long
       let label = node.title;
-      const maxWidth = 100 / camera.zoom;
+      const maxWidth = 110 / camera.zoom;
       let textWidth = ctx.measureText(label).width;
       if (textWidth > maxWidth) {
         while (textWidth > maxWidth && label.length > 3) {
@@ -478,13 +610,18 @@ function renderGraph(
         }
         label = label + '...';
       }
-      ctx.fillText(label, node.x, node.y + r + 10);
+      // Subtle text shadow for readability
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.6)';
+      ctx.shadowBlur = 4;
+      ctx.fillText(label, node.x, labelY);
+      ctx.restore();
 
-      // Type badge below label
+      // Type badge below label — only when zoomed in
       if (camera.zoom > 0.6) {
-        ctx.fillStyle = color + 'CC';
+        ctx.fillStyle = isHighlighted ? color + 'CC' : color + '80';
         ctx.font = '9px "IBM Plex Mono", monospace';
-        ctx.fillText(NODE_TYPE_LABELS[node.type], node.x, node.y + r + 24);
+        ctx.fillText(NODE_TYPE_LABELS[node.type], node.x, labelY + 16);
       }
     }
   });
@@ -504,14 +641,12 @@ function hitTestNode(
   width: number,
   height: number,
 ): GraphNode | null {
-  // Transform screen to world
   const worldX = (screenX - (width / 2 + camera.x)) / camera.zoom;
   const worldY = (screenY - (height / 2 + camera.y)) / camera.zoom;
 
-  // Check nodes in reverse order (top first)
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i];
-    const r = 8 + node.size * 5 + 8; // padding
+    const r = 8 + node.size * 5 + 12; // generous hit area
     const dx = worldX - node.x;
     const dy = worldY - node.y;
     if (dx * dx + dy * dy <= r * r) {
@@ -533,13 +668,15 @@ export default function Brain() {
   const draggedNodeIdRef = useRef<string | null>(null);
   const isPanningRef = useRef(false);
   const lastMouseRef = useRef({ x: 0, y: 0 });
+  const lastPanVelRef = useRef({ x: 0, y: 0 });
+  const newNodeAnimRef = useRef<{ id: string; startTime: number } | null>(null);
 
   // State
   const [nodes, setNodes] = useState<GraphNode[]>(() =>
     MOCK_NODES.map(n => ({ ...n })),
   );
   const [edges] = useState<GraphEdge[]>(MOCK_EDGES);
-  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
+  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 0.85 }); // initial zoom 0.85
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -551,6 +688,8 @@ export default function Brain() {
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showLayoutMenu, setShowLayoutMenu] = useState(false);
   const [connectedToSelected, setConnectedToSelected] = useState<GraphNode[]>([]);
+  const [activeTab, setActiveTab] = useState<BrainTab>('graph');
+  const [showObsidianLinkMenu, setShowObsidianLinkMenu] = useState(false);
 
   const selectedNode = useMemo(
     () => nodes.find(n => n.id === selectedId) || null,
@@ -619,23 +758,38 @@ export default function Brain() {
     setConnectedToSelected(connected);
   }, [selectedId, edges, nodes]);
 
-  // Animation loop: physics + render
+  // Animation loop: physics + render with smooth camera
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas actual size for DPR
     const dpr = window.devicePixelRatio || 1;
     canvas.width = canvasSize.width * dpr;
     canvas.height = canvasSize.height * dpr;
 
     let lastTime = performance.now();
+    let accumulatedDt = 0;
 
     const loop = (time: number) => {
-      const dt = Math.min((time - lastTime) / 16.67, 2); // normalize to ~60fps
+      const rawDt = (time - lastTime) / 16.67;
+      const dt = Math.min(rawDt, 2);
       lastTime = time;
+
+      // Smooth camera lerp (~0.15 per frame)
+      setCamera(prev => smoothCamera(prev, 0.15));
+
+      // Pan momentum
+      if (!isPanningRef.current && (Math.abs(lastPanVelRef.current.x) > 0.1 || Math.abs(lastPanVelRef.current.y) > 0.1)) {
+        setCamera(prev => ({
+          ...prev,
+          x: prev.x + lastPanVelRef.current.x,
+          y: prev.y + lastPanVelRef.current.y,
+        }));
+        lastPanVelRef.current.x *= 0.92;
+        lastPanVelRef.current.y *= 0.92;
+      }
 
       // Physics
       if (layoutMode === 'force') {
@@ -644,7 +798,7 @@ export default function Brain() {
       }
 
       // Render
-      renderGraph(ctx, nodes, edges, camera, canvasSize.width, canvasSize.height, hoveredId, selectedId, searchQuery);
+      renderGraph(ctx, nodes, edges, camera, canvasSize.width, canvasSize.height, hoveredId, selectedId, searchQuery, time);
 
       animRef.current = requestAnimationFrame(loop);
     };
@@ -671,7 +825,7 @@ export default function Brain() {
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
-      if (e.button === 2) return; // right click
+      if (e.button === 2) return;
       const [mx, my] = getMousePos(e);
       const hitNode = hitTestNode(nodes, mx, my, camera, canvasSize.width, canvasSize.height);
 
@@ -685,6 +839,7 @@ export default function Brain() {
         setSelectedId(null);
       }
       lastMouseRef.current = { x: mx, y: my };
+      lastPanVelRef.current = { x: 0, y: 0 };
     },
     [nodes, camera, canvasSize, getMousePos],
   );
@@ -694,7 +849,6 @@ export default function Brain() {
       const [mx, my] = getMousePos(e);
 
       if (isDraggingNodeRef.current && draggedNodeIdRef.current) {
-        // Drag node in world space
         const dx = (mx - lastMouseRef.current.x) / camera.zoom;
         const dy = (my - lastMouseRef.current.y) / camera.zoom;
         setNodes(prev =>
@@ -704,10 +858,10 @@ export default function Brain() {
       } else if (isPanningRef.current) {
         const dx = mx - lastMouseRef.current.x;
         const dy = my - lastMouseRef.current.y;
+        lastPanVelRef.current = { x: dx, y: dy };
         setCamera(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
         lastMouseRef.current = { x: mx, y: my };
       } else {
-        // Hover detection
         const hitNode = hitTestNode(nodes, mx, my, camera, canvasSize.width, canvasSize.height);
         setHoveredId(hitNode?.id || null);
       }
@@ -728,14 +882,19 @@ export default function Brain() {
       const zoomFactor = e.deltaY > 0 ? 0.92 : 1.08;
       const newZoom = Math.max(0.1, Math.min(5, camera.zoom * zoomFactor));
 
-      // Zoom towards mouse position
+      // Zoom towards mouse position with smooth target
       const worldBeforeX = (mx - (canvasSize.width / 2 + camera.x)) / camera.zoom;
       const worldBeforeY = (my - (canvasSize.height / 2 + camera.y)) / camera.zoom;
 
-      const newCameraX = mx - (canvasSize.width / 2 + worldBeforeX * newZoom);
-      const newCameraY = my - (canvasSize.height / 2 + worldBeforeY * newZoom);
+      const targetX = mx - (canvasSize.width / 2 + worldBeforeX * newZoom);
+      const targetY = my - (canvasSize.height / 2 + worldBeforeY * newZoom);
 
-      setCamera({ x: newCameraX, y: newCameraY, zoom: newZoom });
+      setCamera(prev => ({
+        ...prev,
+        targetZoom: newZoom,
+        targetX,
+        targetY,
+      }));
     },
     [camera, canvasSize, getMousePos],
   );
@@ -743,10 +902,8 @@ export default function Brain() {
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       const [mx, my] = getMousePos(e);
-      // Check if clicked on empty space
       const hitNode = hitTestNode(nodes, mx, my, camera, canvasSize.width, canvasSize.height);
       if (!hitNode) {
-        // Create new node at world position
         const worldX = (mx - (canvasSize.width / 2 + camera.x)) / camera.zoom;
         const worldY = (my - (canvasSize.height / 2 + camera.y)) / camera.zoom;
         const newNode: GraphNode = {
@@ -761,6 +918,7 @@ export default function Brain() {
           createdAt: new Date().toISOString().split('T')[0],
           updatedAt: new Date().toISOString().split('T')[0],
         };
+        newNodeAnimRef.current = { id: newNode.id, startTime: performance.now() };
         setNodes(prev => [...prev, newNode]);
         setSelectedId(newNode.id);
       }
@@ -788,15 +946,17 @@ export default function Brain() {
   /* ================================================================ */
 
   const zoomIn = useCallback(() => {
-    setCamera(prev => ({ ...prev, zoom: Math.min(5, prev.zoom * 1.2) }));
-  }, []);
+    const newZoom = Math.min(5, camera.zoom * 1.2);
+    setCamera(prev => ({ ...prev, targetZoom: newZoom, targetX: prev.x, targetY: prev.y }));
+  }, [camera.zoom]);
 
   const zoomOut = useCallback(() => {
-    setCamera(prev => ({ ...prev, zoom: Math.max(0.1, prev.zoom / 1.2) }));
-  }, []);
+    const newZoom = Math.max(0.1, camera.zoom / 1.2);
+    setCamera(prev => ({ ...prev, targetZoom: newZoom, targetX: prev.x, targetY: prev.y }));
+  }, [camera.zoom]);
 
   const zoomReset = useCallback(() => {
-    setCamera({ x: 0, y: 0, zoom: 1 });
+    setCamera({ x: 0, y: 0, zoom: 0.85, targetZoom: 0.85, targetX: 0, targetY: 0 });
   }, []);
 
   const deleteNode = useCallback((nodeId: string) => {
@@ -848,454 +1008,591 @@ export default function Brain() {
     }).length;
   }, [nodes, searchQuery, filterType]);
 
+  /* ================================================================ */
+  /*  HANDLERS FOR VAULT LINKING                                       */
+  /* ================================================================ */
+
+  const handleLinkObsidianNote = useCallback((noteId: string) => {
+    handleUpdateNode({ obsidianNoteId: noteId });
+    setShowObsidianLinkMenu(false);
+  }, [handleUpdateNode]);
+
   /* ================================================================== */
   /*  RENDER                                                             */
   /* ================================================================== */
 
   return (
-    <div ref={containerRef} className="absolute inset-0 bg-black overflow-hidden" style={{ margin: '-32px -32px 0 -32px' }}>
-      {/* Canvas */}
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 cursor-crosshair"
-        style={{ width: canvasSize.width, height: canvasSize.height }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-        onWheel={handleWheel}
-        onDoubleClick={handleDoubleClick}
-        onContextMenu={handleContextMenu}
-      />
-
-      {/* Toolbar (top) */}
-      <div className="absolute top-4 left-4 right-4 z-20 flex items-center gap-2 pointer-events-none">
-        <div className="flex items-center gap-2 pointer-events-auto bg-[#0C0D0F] border border-white/[0.06] rounded-xl px-3 py-2 shadow-lg">
-          <Search className="w-4 h-4 text-[#5E626A]" />
-          <input
-            type="text"
-            placeholder="Knoten suchen..."
-            value={searchQuery}
-            onChange={e => setSearchQuery(e.target.value)}
-            className="bg-transparent text-sm text-white placeholder-[#5E626A] outline-none w-40"
-            style={{ fontFamily: 'DM Sans, sans-serif' }}
-          />
-          {searchQuery && (
-            <button onClick={() => setSearchQuery('')} className="text-[#5E626A] hover:text-white transition-colors">
-              <X className="w-3 h-3" />
-            </button>
-          )}
-        </div>
-
-        {/* Filter dropdown */}
-        <div className="relative pointer-events-auto">
-          <button
-            onClick={() => { setShowFilterMenu(v => !v); setShowLayoutMenu(false); }}
-            className="flex items-center gap-1.5 bg-[#0C0D0F] border border-white/[0.06] rounded-xl px-3 py-2 text-sm text-[#A1A4AA] hover:text-white hover:border-white/[0.12] transition-colors shadow-lg"
-          >
-            <Filter className="w-4 h-4" />
-            <span>Filter</span>
-            <ChevronDown className="w-3 h-3" />
-          </button>
-          <AnimatePresence>
-            {showFilterMenu && (
-              <motion.div
-                initial={{ opacity: 0, y: -5, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -5, scale: 0.97 }}
-                transition={{ duration: 0.15 }}
-                className="absolute top-full mt-1 left-0 bg-[#0C0D0F] border border-white/[0.06] rounded-xl shadow-xl py-1 min-w-[160px]"
-              >
-                <button
-                  onClick={() => { setFilterType('all'); setShowFilterMenu(false); }}
-                  className={`w-full text-left px-3 py-1.5 text-sm ${filterType === 'all' ? 'text-white bg-white/[0.06]' : 'text-[#A1A4AA] hover:text-white hover:bg-white/[0.04]'} transition-colors`}
-                >
-                  Alle Typen
-                </button>
-                {NODE_TYPE_OPTIONS.map(type => (
-                  <button
-                    key={type}
-                    onClick={() => { setFilterType(type); setShowFilterMenu(false); }}
-                    className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 ${filterType === type ? 'text-white bg-white/[0.06]' : 'text-[#A1A4AA] hover:text-white hover:bg-white/[0.04]'} transition-colors`}
-                  >
-                    <span className="w-2 h-2 rounded-full" style={{ backgroundColor: NODE_COLORS[type] }} />
-                    {NODE_TYPE_LABELS[type]}
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Layout dropdown */}
-        <div className="relative pointer-events-auto">
-          <button
-            onClick={() => { setShowLayoutMenu(v => !v); setShowFilterMenu(false); }}
-            className="flex items-center gap-1.5 bg-[#0C0D0F] border border-white/[0.06] rounded-xl px-3 py-2 text-sm text-[#A1A4AA] hover:text-white hover:border-white/[0.12] transition-colors shadow-lg"
-          >
-            <LayoutTemplate className="w-4 h-4" />
-            <span>Layout</span>
-            <ChevronDown className="w-3 h-3" />
-          </button>
-          <AnimatePresence>
-            {showLayoutMenu && (
-              <motion.div
-                initial={{ opacity: 0, y: -5, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -5, scale: 0.97 }}
-                transition={{ duration: 0.15 }}
-                className="absolute top-full mt-1 left-0 bg-[#0C0D0F] border border-white/[0.06] rounded-xl shadow-xl py-1 min-w-[160px]"
-              >
-                {([
-                  ['force', 'Force-Directed'],
-                  ['circular', 'Kreisf\u00f6rmig'],
-                  ['grid', 'Raster'],
-                  ['hierarchical', 'Hierarchisch'],
-                ] as [LayoutMode, string][]).map(([mode, label]) => (
-                  <button
-                    key={mode}
-                    onClick={() => { setLayoutMode(mode); setShowLayoutMenu(false); }}
-                    className={`w-full text-left px-3 py-1.5 text-sm ${layoutMode === mode ? 'text-white bg-white/[0.06]' : 'text-[#A1A4AA] hover:text-white hover:bg-white/[0.04]'} transition-colors`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
+    <div ref={containerRef} className="absolute inset-0 bg-black overflow-hidden">
+      {/* ── TAB SWITCHER ── */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-25 flex items-center bg-[#0C0D0F] border border-white/[0.06] rounded-xl p-1 shadow-lg">
         <button
-          onClick={() => {
-            const newNode: GraphNode = {
-              id: `n${Date.now()}`,
-              type: 'note',
-              title: 'Neuer Knoten',
-              x: (-camera.x) / camera.zoom + (Math.random() - 0.5) * 100,
-              y: (-camera.y) / camera.zoom + (Math.random() - 0.5) * 100,
-              size: 1,
-              tags: [],
-              status: 'aktiv',
-              createdAt: new Date().toISOString().split('T')[0],
-              updatedAt: new Date().toISOString().split('T')[0],
-            };
-            setNodes(prev => [...prev, newNode]);
-            setSelectedId(newNode.id);
-          }}
-          className="pointer-events-auto flex items-center gap-1.5 bg-[#FF8C5A] hover:bg-[#e67d4f] text-black rounded-xl px-3 py-2 text-sm font-semibold transition-colors shadow-lg"
+          onClick={() => setActiveTab('graph')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'graph'
+              ? 'bg-[#FF8C5A]/15 text-[#FF8C5A]'
+              : 'text-[#5E626A] hover:text-[#A1A4AA]'
+          }`}
         >
-          <Plus className="w-4 h-4" />
-          <span>Neuer Knoten</span>
+          <GitGraph className="w-4 h-4" />
+          Graph
         </button>
-
-        <div className="flex-1" />
-
-        {/* Zoom controls */}
-        <div className="pointer-events-auto flex items-center bg-[#0C0D0F] border border-white/[0.06] rounded-xl shadow-lg overflow-hidden">
-          <button onClick={zoomOut} className="p-2 text-[#A1A4AA] hover:text-white hover:bg-white/[0.06] transition-colors">
-            <ZoomOut className="w-4 h-4" />
-          </button>
-          <span className="px-2 text-xs text-[#5E626A] font-mono border-x border-white/[0.06] min-w-[48px] text-center">
-            {Math.round(camera.zoom * 100)}%
-          </span>
-          <button onClick={zoomIn} className="p-2 text-[#A1A4AA] hover:text-white hover:bg-white/[0.06] transition-colors">
-            <ZoomIn className="w-4 h-4" />
-          </button>
-          <button onClick={zoomReset} className="p-2 text-[#A1A4AA] hover:text-white hover:bg-white/[0.06] transition-colors border-l border-white/[0.06]">
-            <Maximize className="w-4 h-4" />
-          </button>
-        </div>
+        <button
+          onClick={() => setActiveTab('vault')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+            activeTab === 'vault'
+              ? 'bg-[#36CFC9]/15 text-[#36CFC9]'
+              : 'text-[#5E626A] hover:text-[#A1A4AA]'
+          }`}
+        >
+          <BookOpen className="w-4 h-4" />
+          Obsidian Vault
+        </button>
       </div>
 
-      {/* Help tooltip */}
-      <AnimatePresence>
-        {showHelp && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            transition={{ duration: 0.4 }}
-            className="absolute bottom-16 left-1/2 -translate-x-1/2 z-20 bg-[#0C0D0F] border border-white/[0.06] rounded-xl px-4 py-3 shadow-xl"
-          >
-            <div className="flex items-start gap-3">
-              <HelpCircle className="w-5 h-5 text-[#FF8C5A] shrink-0 mt-0.5" />
-              <div>
-                <p className="text-sm text-white font-medium">Knowledge Graph</p>
-                <p className="text-xs text-[#A1A4AA] mt-1">
-                  Doppelklick: Neuer Knoten &middot; Drag: Verschieben &middot; Scroll: Zoomen &middot; Rechtsklick: Men\u00fc
-                </p>
-              </div>
-              <button onClick={() => setShowHelp(false)} className="text-[#5E626A] hover:text-white transition-colors ml-2">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* ── GRAPH VIEW ── */}
+      {activeTab === 'graph' && (
+        <>
+          {/* Canvas */}
+          <canvas
+            ref={canvasRef}
+            className="absolute inset-0 cursor-crosshair"
+            style={{ width: canvasSize.width, height: canvasSize.height }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onWheel={handleWheel}
+            onDoubleClick={handleDoubleClick}
+            onContextMenu={handleContextMenu}
+          />
 
-      {/* Detail Panel (right) */}
-      <AnimatePresence>
-        {selectedNode && (
-          <motion.div
-            initial={{ x: 360, opacity: 0 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 360, opacity: 0 }}
-            transition={{ type: 'spring', damping: 28, stiffness: 280 }}
-            className="absolute top-4 bottom-4 right-4 z-30 w-[340px] bg-[#0C0D0F] border border-white/[0.06] rounded-xl overflow-hidden flex flex-col shadow-2xl"
-          >
-            {/* Header */}
-            <div className="flex items-start justify-between p-4 border-b border-white/[0.06]">
-              <div className="flex items-center gap-3">
-                <div
-                  className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0"
-                  style={{ backgroundColor: NODE_COLORS[selectedNode.type] + '20', border: `1.5px solid ${NODE_COLORS[selectedNode.type]}40` }}
-                >
-                  {(() => {
-                    const Icon = TYPE_ICONS[selectedNode.type] || Circle;
-                    return <Icon className="w-5 h-5" style={{ color: NODE_COLORS[selectedNode.type] }} />;
-                  })()}
-                </div>
-                <div>
-                  <h3 className="text-white font-semibold text-sm">{selectedNode.title}</h3>
-                  <span
-                    className="text-xs px-1.5 py-0.5 rounded-md inline-block mt-0.5"
-                    style={{
-                      color: NODE_COLORS[selectedNode.type],
-                      backgroundColor: NODE_COLORS[selectedNode.type] + '18',
-                    }}
-                  >
-                    {NODE_TYPE_LABELS[selectedNode.type]}
-                  </span>
-                </div>
-              </div>
+          {/* Toolbar (top) */}
+          <div className="absolute top-16 left-4 right-4 z-20 flex items-center gap-2 pointer-events-none">
+            <div className="flex items-center gap-2 pointer-events-auto bg-[#0C0D0F] border border-white/[0.06] rounded-xl px-3 py-2 shadow-lg">
+              <Search className="w-4 h-4 text-[#5E626A]" />
+              <input
+                type="text"
+                placeholder="Knoten suchen..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="bg-transparent text-sm text-white placeholder-[#5E626A] outline-none w-40"
+                style={{ fontFamily: 'DM Sans, sans-serif' }}
+              />
+              {searchQuery && (
+                <button onClick={() => setSearchQuery('')} className="text-[#5E626A] hover:text-white transition-colors">
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+
+            {/* Filter dropdown */}
+            <div className="relative pointer-events-auto">
               <button
-                onClick={() => setSelectedId(null)}
-                className="text-[#5E626A] hover:text-white transition-colors p-1"
+                onClick={() => { setShowFilterMenu(v => !v); setShowLayoutMenu(false); }}
+                className="flex items-center gap-1.5 bg-[#0C0D0F] border border-white/[0.06] rounded-xl px-3 py-2 text-sm text-[#A1A4AA] hover:text-white hover:border-white/[0.12] transition-colors shadow-lg"
               >
-                <X className="w-4 h-4" />
+                <Filter className="w-4 h-4" />
+                <span>Filter</span>
+                <ChevronDown className="w-3 h-3" />
               </button>
+              <AnimatePresence>
+                {showFilterMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -5, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -5, scale: 0.97 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute top-full mt-1 left-0 bg-[#0C0D0F] border border-white/[0.06] rounded-xl shadow-xl py-1 min-w-[160px]"
+                  >
+                    <button
+                      onClick={() => { setFilterType('all'); setShowFilterMenu(false); }}
+                      className={`w-full text-left px-3 py-1.5 text-sm ${filterType === 'all' ? 'text-white bg-white/[0.06]' : 'text-[#A1A4AA] hover:text-white hover:bg-white/[0.04]'} transition-colors`}
+                    >
+                      Alle Typen
+                    </button>
+                    {NODE_TYPE_OPTIONS.map(type => (
+                      <button
+                        key={type}
+                        onClick={() => { setFilterType(type); setShowFilterMenu(false); }}
+                        className={`w-full text-left px-3 py-1.5 text-sm flex items-center gap-2 ${filterType === type ? 'text-white bg-white/[0.06]' : 'text-[#A1A4AA] hover:text-white hover:bg-white/[0.04]'} transition-colors`}
+                      >
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: NODE_COLORS[type] }} />
+                        {NODE_TYPE_LABELS[type]}
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
-            {/* Content */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {/* Title edit */}
-              <div>
-                <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Titel</label>
-                <input
-                  type="text"
-                  value={selectedNode.title}
-                  onChange={e => handleUpdateNode({ title: e.target.value })}
-                  className="w-full bg-[#141518] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white placeholder-[#5E626A] outline-none focus:border-[#FF8C5A]/40 transition-colors"
-                  style={{ fontFamily: 'DM Sans, sans-serif' }}
-                />
-              </div>
-
-              {/* Type */}
-              <div>
-                <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Typ</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {NODE_TYPE_OPTIONS.map(type => (
-                    <button
-                      key={type}
-                      onClick={() => handleUpdateNode({ type })}
-                      className={`px-2 py-1 rounded-md text-xs transition-colors border ${
-                        selectedNode.type === type
-                          ? 'text-white border-white/[0.12] bg-white/[0.08]'
-                          : 'text-[#5E626A] border-transparent hover:text-[#A1A4AA] hover:bg-white/[0.04]'
-                      }`}
-                    >
-                      {NODE_TYPE_LABELS[type]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Status + Priority */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Status</label>
-                  <select
-                    value={selectedNode.status || 'aktiv'}
-                    onChange={e => handleUpdateNode({ status: e.target.value })}
-                    className="w-full bg-[#141518] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[#FF8C5A]/40 transition-colors appearance-none"
-                    style={{ fontFamily: 'DM Sans, sans-serif' }}
+            {/* Layout dropdown */}
+            <div className="relative pointer-events-auto">
+              <button
+                onClick={() => { setShowLayoutMenu(v => !v); setShowFilterMenu(false); }}
+                className="flex items-center gap-1.5 bg-[#0C0D0F] border border-white/[0.06] rounded-xl px-3 py-2 text-sm text-[#A1A4AA] hover:text-white hover:border-white/[0.12] transition-colors shadow-lg"
+              >
+                <LayoutTemplate className="w-4 h-4" />
+                <span>Layout</span>
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              <AnimatePresence>
+                {showLayoutMenu && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -5, scale: 0.97 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -5, scale: 0.97 }}
+                    transition={{ duration: 0.15 }}
+                    className="absolute top-full mt-1 left-0 bg-[#0C0D0F] border border-white/[0.06] rounded-xl shadow-xl py-1 min-w-[160px]"
                   >
-                    {STATUS_OPTIONS.map(s => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Priorit\u00e4t</label>
-                  <select
-                    value={selectedNode.priority || 'mittel'}
-                    onChange={e => handleUpdateNode({ priority: e.target.value })}
-                    className="w-full bg-[#141518] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[#FF8C5A]/40 transition-colors appearance-none"
-                    style={{ fontFamily: 'DM Sans, sans-serif' }}
-                  >
-                    {PRIORITY_OPTIONS.map(p => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div>
-                <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Inhalt</label>
-                <textarea
-                  value={selectedNode.content || ''}
-                  onChange={e => handleUpdateNode({ content: e.target.value })}
-                  placeholder="Notizen hier eingeben..."
-                  rows={4}
-                  className="w-full bg-[#141518] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white placeholder-[#5E626A] outline-none focus:border-[#FF8C5A]/40 transition-colors resize-none"
-                  style={{ fontFamily: 'DM Sans, sans-serif' }}
-                />
-              </div>
-
-              {/* Tags */}
-              <div>
-                <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 flex items-center gap-1.5">
-                  <Tag className="w-3 h-3" />
-                  Tags
-                </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {selectedNode.tags.map((tag, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-[#141518] border border-white/[0.06] rounded-md text-xs text-[#A1A4AA]"
-                    >
-                      {tag}
+                    {([
+                      ['force', 'Force-Directed'],
+                      ['circular', 'Kreisförmig'],
+                      ['grid', 'Raster'],
+                      ['hierarchical', 'Hierarchisch'],
+                    ] as [LayoutMode, string][]).map(([mode, label]) => (
                       <button
-                        onClick={() => handleUpdateNode({ tags: selectedNode.tags.filter((_, i) => i !== idx) })}
-                        className="text-[#5E626A] hover:text-white transition-colors"
+                        key={mode}
+                        onClick={() => { setLayoutMode(mode); setShowLayoutMenu(false); }}
+                        className={`w-full text-left px-3 py-1.5 text-sm ${layoutMode === mode ? 'text-white bg-white/[0.06]' : 'text-[#A1A4AA] hover:text-white hover:bg-white/[0.04]'} transition-colors`}
                       >
-                        <X className="w-2.5 h-2.5" />
+                        {label}
                       </button>
-                    </span>
-                  ))}
-                  <button
-                    onClick={() => {
-                      const newTag = prompt('Neuer Tag:');
-                      if (newTag && !selectedNode.tags.includes(newTag)) {
-                        handleUpdateNode({ tags: [...selectedNode.tags, newTag] });
-                      }
-                    }}
-                    className="px-2 py-0.5 border border-dashed border-white/[0.08] rounded-md text-xs text-[#5E626A] hover:text-[#A1A4AA] hover:border-white/[0.15] transition-colors"
-                  >
-                    + Tag
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            <button
+              onClick={() => {
+                const newNode: GraphNode = {
+                  id: `n${Date.now()}`,
+                  type: 'note',
+                  title: 'Neuer Knoten',
+                  x: (-camera.x) / camera.zoom + (Math.random() - 0.5) * 100,
+                  y: (-camera.y) / camera.zoom + (Math.random() - 0.5) * 100,
+                  size: 1,
+                  tags: [],
+                  status: 'aktiv',
+                  createdAt: new Date().toISOString().split('T')[0],
+                  updatedAt: new Date().toISOString().split('T')[0],
+                };
+                setNodes(prev => [...prev, newNode]);
+                setSelectedId(newNode.id);
+              }}
+              className="pointer-events-auto flex items-center gap-1.5 bg-[#FF8C5A] hover:bg-[#e67d4f] text-black rounded-xl px-3 py-2 text-sm font-semibold transition-colors shadow-lg"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Neuer Knoten</span>
+            </button>
+
+            <div className="flex-1" />
+
+            {/* Zoom controls */}
+            <div className="pointer-events-auto flex items-center bg-[#0C0D0F] border border-white/[0.06] rounded-xl shadow-lg overflow-hidden">
+              <button onClick={zoomOut} className="p-2 text-[#A1A4AA] hover:text-white hover:bg-white/[0.06] transition-colors">
+                <ZoomOut className="w-4 h-4" />
+              </button>
+              <span className="px-2 text-xs text-[#5E626A] font-mono border-x border-white/[0.06] min-w-[48px] text-center">
+                {Math.round(camera.zoom * 100)}%
+              </span>
+              <button onClick={zoomIn} className="p-2 text-[#A1A4AA] hover:text-white hover:bg-white/[0.06] transition-colors">
+                <ZoomIn className="w-4 h-4" />
+              </button>
+              <button onClick={zoomReset} className="p-2 text-[#A1A4AA] hover:text-white hover:bg-white/[0.06] transition-colors border-l border-white/[0.06]">
+                <Maximize className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Help tooltip */}
+          <AnimatePresence>
+            {showHelp && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                transition={{ duration: 0.4 }}
+                className="absolute bottom-16 left-1/2 -translate-x-1/2 z-20 bg-[#0C0D0F] border border-white/[0.06] rounded-xl px-4 py-3 shadow-xl"
+              >
+                <div className="flex items-start gap-3">
+                  <HelpCircle className="w-5 h-5 text-[#FF8C5A] shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-white font-medium">Knowledge Graph</p>
+                    <p className="text-xs text-[#A1A4AA] mt-1">
+                      Doppelklick: Neuer Knoten &middot; Drag: Verschieben &middot; Scroll: Zoomen &middot; Rechtsklick: Menü
+                    </p>
+                  </div>
+                  <button onClick={() => setShowHelp(false)} className="text-[#5E626A] hover:text-white transition-colors ml-2">
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
-              </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-              {/* Connected nodes */}
-              <div>
-                <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 flex items-center gap-1.5">
-                  <Link className="w-3 h-3" />
-                  Verbindungen ({connectedToSelected.length})
-                </label>
-                <div className="space-y-1">
-                  {connectedToSelected.map(node => (
-                    <button
-                      key={node.id}
-                      onClick={() => setSelectedId(node.id)}
-                      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors text-left"
+          {/* Detail Panel (right) — ENHANCED: 380px wide */}
+          <AnimatePresence>
+            {selectedNode && (
+              <motion.div
+                initial={{ x: 400, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                exit={{ x: 400, opacity: 0 }}
+                transition={{ type: 'spring', damping: 28, stiffness: 280 }}
+                className="absolute top-4 bottom-4 right-4 z-30 w-[380px] bg-[#0C0D0F] border border-white/[0.06] rounded-xl overflow-hidden flex flex-col shadow-2xl"
+              >
+                {/* Enhanced Header with Icon + Color */}
+                <div className="flex items-start justify-between p-4 border-b border-white/[0.06]">
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 relative"
+                      style={{
+                        backgroundColor: NODE_COLORS[selectedNode.type] + '18',
+                        border: `1.5px solid ${NODE_COLORS[selectedNode.type]}40`,
+                        boxShadow: `0 0 16px ${NODE_COLORS[selectedNode.type]}20`,
+                      }}
                     >
-                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: NODE_COLORS[node.type] }} />
-                      <span className="text-sm text-[#A1A4AA] hover:text-white truncate">{node.title}</span>
-                    </button>
-                  ))}
-                  {connectedToSelected.length === 0 && (
-                    <p className="text-xs text-[#5E626A] italic px-2">Keine Verbindungen</p>
-                  )}
+                      {(() => {
+                        const Icon = TYPE_ICONS[selectedNode.type] || Circle;
+                        return <Icon className="w-5 h-5" style={{ color: NODE_COLORS[selectedNode.type] }} />;
+                      })()}
+                      {/* Status dot */}
+                      <span
+                        className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[#0C0D0F]"
+                        style={{ backgroundColor: NODE_COLORS[selectedNode.type] }}
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-white font-semibold text-sm truncate">{selectedNode.title}</h3>
+                      <span
+                        className="text-xs px-2 py-0.5 rounded-md inline-block mt-1 font-medium"
+                        style={{
+                          color: NODE_COLORS[selectedNode.type],
+                          backgroundColor: NODE_COLORS[selectedNode.type] + '18',
+                        }}
+                      >
+                        {NODE_TYPE_LABELS[selectedNode.type]}
+                      </span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setSelectedId(null)}
+                    className="text-[#5E626A] hover:text-white transition-colors p-1 rounded-lg hover:bg-white/[0.04]"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-              </div>
 
-              {/* Timestamps */}
-              <div className="pt-2 border-t border-white/[0.06] space-y-1">
-                <div className="flex items-center gap-2 text-xs text-[#5E626A]">
-                  <Clock className="w-3 h-3" />
-                  <span>Erstellt: {selectedNode.createdAt || 'unbekannt'}</span>
+                {/* Content */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                  {/* Title edit */}
+                  <div>
+                    <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Titel</label>
+                    <input
+                      type="text"
+                      value={selectedNode.title}
+                      onChange={e => handleUpdateNode({ title: e.target.value })}
+                      className="w-full bg-[#141518] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white placeholder-[#5E626A] outline-none focus:border-[#FF8C5A]/40 transition-colors"
+                      style={{ fontFamily: 'DM Sans, sans-serif' }}
+                    />
+                  </div>
+
+                  {/* Type */}
+                  <div>
+                    <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Typ</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {NODE_TYPE_OPTIONS.map(type => (
+                        <button
+                          key={type}
+                          onClick={() => handleUpdateNode({ type })}
+                          className={`px-2.5 py-1 rounded-md text-xs transition-colors border ${
+                            selectedNode.type === type
+                              ? 'text-white border-white/[0.12] bg-white/[0.08]'
+                              : 'text-[#5E626A] border-transparent hover:text-[#A1A4AA] hover:bg-white/[0.04]'
+                          }`}
+                        >
+                          {NODE_TYPE_LABELS[type]}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Status + Priority */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Status</label>
+                      <select
+                        value={selectedNode.status || 'aktiv'}
+                        onChange={e => handleUpdateNode({ status: e.target.value })}
+                        className="w-full bg-[#141518] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[#FF8C5A]/40 transition-colors appearance-none"
+                        style={{ fontFamily: 'DM Sans, sans-serif' }}
+                      >
+                        {STATUS_OPTIONS.map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Priorität</label>
+                      <select
+                        value={selectedNode.priority || 'mittel'}
+                        onChange={e => handleUpdateNode({ priority: e.target.value })}
+                        className="w-full bg-[#141518] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-[#FF8C5A]/40 transition-colors appearance-none"
+                        style={{ fontFamily: 'DM Sans, sans-serif' }}
+                      >
+                        {PRIORITY_OPTIONS.map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Content */}
+                  <div>
+                    <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 block">Inhalt</label>
+                    <textarea
+                      value={selectedNode.content || ''}
+                      onChange={e => handleUpdateNode({ content: e.target.value })}
+                      placeholder="Notizen hier eingeben..."
+                      rows={4}
+                      className="w-full bg-[#141518] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-white placeholder-[#5E626A] outline-none focus:border-[#FF8C5A]/40 transition-colors resize-none"
+                      style={{ fontFamily: 'DM Sans, sans-serif' }}
+                    />
+                  </div>
+
+                  {/* Tags — ENHANCED: Pill style */}
+                  <div>
+                    <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 flex items-center gap-1.5">
+                      <Tag className="w-3 h-3" />
+                      Tags
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {selectedNode.tags.map((tag, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-white/[0.08] text-[#A1A4AA] bg-white/[0.03]"
+                        >
+                          {tag}
+                          <button
+                            onClick={() => handleUpdateNode({ tags: selectedNode.tags.filter((_, i) => i !== idx) })}
+                            className="text-[#5E626A] hover:text-white transition-colors"
+                          >
+                            <X className="w-2.5 h-2.5" />
+                          </button>
+                        </span>
+                      ))}
+                      <button
+                        onClick={() => {
+                          const newTag = prompt('Neuer Tag:');
+                          if (newTag && !selectedNode.tags.includes(newTag)) {
+                            handleUpdateNode({ tags: [...selectedNode.tags, newTag] });
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded-full border border-dashed border-white/[0.08] text-xs text-[#5E626A] hover:text-[#A1A4AA] hover:border-white/[0.15] transition-colors"
+                      >
+                        + Tag
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Obsidian Link Section */}
+                  <div className="pt-1">
+                    <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 flex items-center gap-1.5">
+                      <BookOpen className="w-3 h-3" />
+                      Obsidian Note
+                    </label>
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowObsidianLinkMenu(v => !v)}
+                        className="w-full flex items-center justify-between bg-[#141518] border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-[#A1A4AA] hover:border-white/[0.12] transition-colors"
+                      >
+                        <span className="truncate">
+                          {selectedNode.obsidianNoteId
+                            ? `Verknüpft: ${selectedNode.obsidianNoteId.slice(0, 8)}...`
+                            : 'Mit Obsidian Note verknüpfen...'}
+                        </span>
+                        <ChevronDown className="w-3.5 h-3.5 shrink-0" />
+                      </button>
+                      <AnimatePresence>
+                        {showObsidianLinkMenu && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -4 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -4 }}
+                            className="absolute top-full mt-1 left-0 right-0 bg-[#141518] border border-white/[0.06] rounded-lg shadow-xl py-1 max-h-40 overflow-y-auto z-10"
+                          >
+                            <button
+                              onClick={() => { handleUpdateNode({ obsidianNoteId: null }); setShowObsidianLinkMenu(false); }}
+                              className="w-full text-left px-3 py-1.5 text-sm text-[#5E626A] hover:text-white hover:bg-white/[0.04] transition-colors"
+                            >
+                              Keine Verknüpfung
+                            </button>
+                            {/* Mock obsidian notes — will be populated by real data later */}
+                            {['note-1', 'note-2', 'note-3'].map(id => (
+                              <button
+                                key={id}
+                                onClick={() => handleLinkObsidianNote(id)}
+                                className={`w-full text-left px-3 py-1.5 text-sm transition-colors ${
+                                  selectedNode.obsidianNoteId === id
+                                    ? 'text-[#36CFC9] bg-[#36CFC9]/10'
+                                    : 'text-[#A1A4AA] hover:text-white hover:bg-white/[0.04]'
+                                }`}
+                              >
+                                Obsidian Note {id}
+                              </button>
+                            ))}
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  </div>
+
+                  {/* Connected nodes — ENHANCED */}
+                  <div>
+                    <label className="text-xs text-[#5E626A] uppercase tracking-wider font-medium mb-1.5 flex items-center gap-1.5">
+                      <Link className="w-3 h-3" />
+                      Verbundene Nodes ({connectedToSelected.length})
+                    </label>
+                    <div className="space-y-0.5">
+                      {connectedToSelected.map(node => (
+                        <button
+                          key={node.id}
+                          onClick={() => setSelectedId(node.id)}
+                          className="w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-white/[0.04] transition-colors text-left group"
+                        >
+                          <div
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: NODE_COLORS[node.type] }}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <span className="text-sm text-[#A1A4AA] group-hover:text-white truncate block transition-colors">
+                              {node.title}
+                            </span>
+                            <span className="text-[10px] text-[#5E626A] font-mono">
+                              {NODE_TYPE_LABELS[node.type]}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-[#5E626A] opacity-0 group-hover:opacity-100 transition-opacity">
+                            {edges.find(e =>
+                              (e.source === selectedNode.id && e.target === node.id) ||
+                              (e.target === selectedNode.id && e.source === node.id)
+                            )?.label || 'verknüpft'}
+                          </span>
+                        </button>
+                      ))}
+                      {connectedToSelected.length === 0 && (
+                        <p className="text-xs text-[#5E626A] italic px-2 py-1">Keine Verbindungen</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Timestamps */}
+                  <div className="pt-2 border-t border-white/[0.06] space-y-1.5">
+                    <div className="flex items-center gap-2 text-xs text-[#5E626A]">
+                      <Clock className="w-3 h-3" />
+                      <span>Erstellt: {selectedNode.createdAt || 'unbekannt'}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-[#5E626A]">
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Aktualisiert: {selectedNode.updatedAt || 'unbekannt'}</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-[#5E626A]">
-                  <RefreshCw className="w-3 h-3" />
-                  <span>Aktualisiert: {selectedNode.updatedAt || 'unbekannt'}</span>
-                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Context Menu */}
+          <AnimatePresence>
+            {contextMenu && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.12 }}
+                className="fixed z-50 bg-[#0C0D0F] border border-white/[0.06] rounded-xl shadow-2xl py-1 min-w-[180px]"
+                style={{ left: contextMenu.x, top: contextMenu.y }}
+              >
+                {[
+                  { label: 'Details bearbeiten', icon: Edit3, action: () => { setSelectedId(contextMenu.nodeId); setContextMenu(null); } },
+                  { label: 'Verbindung hinzufügen', icon: Link, action: () => { setSelectedId(contextMenu.nodeId); setContextMenu(null); } },
+                  { label: 'Duplizieren', icon: Copy, action: () => duplicateNode(contextMenu.nodeId) },
+                  { label: 'Archivieren', icon: Archive, action: () => { handleUpdateNode({ status: 'archiviert' }); setContextMenu(null); } },
+                  { label: 'Löschen', icon: Trash2, action: () => deleteNode(contextMenu.nodeId), danger: true },
+                ].map((item, idx) => (
+                  <button
+                    key={idx}
+                    onClick={item.action}
+                    className={`w-full text-left flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
+                      item.danger
+                        ? 'text-[#EF4444] hover:bg-[#EF4444]/10'
+                        : 'text-[#A1A4AA] hover:text-white hover:bg-white/[0.06]'
+                    }`}
+                  >
+                    <item.icon className="w-4 h-4" />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Click outside to close context menu */}
+          {contextMenu && (
+            <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
+          )}
+
+          {/* Status Bar (bottom) */}
+          <div className="absolute bottom-4 left-4 z-10 flex items-center gap-4 pointer-events-none">
+            <div className="bg-[#0C0D0F] border border-white/[0.06] rounded-lg px-3 py-1.5 shadow-lg">
+              <span className="text-xs text-[#5E626A]">
+                <span className="text-[#A1A4AA] font-medium">{visibleNodeCount}</span> Knoten
+                <span className="mx-1.5 text-white/[0.06]">|</span>
+                <span className="text-[#A1A4AA] font-medium">{edges.length}</span> Verbindungen
+                <span className="mx-1.5 text-white/[0.06]">|</span>
+                <span className="text-[#A1A4AA] font-medium">{stats.typeCount}</span> Typen
+              </span>
+            </div>
+          </div>
+
+          {/* Node type legend (bottom right) */}
+          <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
+            <div className="bg-[#0C0D0F] border border-white/[0.06] rounded-lg px-3 py-2 shadow-lg">
+              <div className="flex flex-wrap gap-x-3 gap-y-1 max-w-[240px]">
+                {NODE_TYPE_OPTIONS.slice(0, 6).map(type => (
+                  <div key={type} className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: NODE_COLORS[type] }} />
+                    <span className="text-[10px] text-[#5E626A]">{NODE_TYPE_LABELS[type]}</span>
+                  </div>
+                ))}
               </div>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Context Menu */}
-      <AnimatePresence>
-        {contextMenu && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            transition={{ duration: 0.12 }}
-            className="fixed z-50 bg-[#0C0D0F] border border-white/[0.06] rounded-xl shadow-2xl py-1 min-w-[180px]"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
-          >
-            {[
-              { label: 'Details bearbeiten', icon: Edit3, action: () => { setSelectedId(contextMenu.nodeId); setContextMenu(null); } },
-              { label: 'Verbindung hinzuf\u00fcgen', icon: Link, action: () => { setSelectedId(contextMenu.nodeId); setContextMenu(null); } },
-              { label: 'Duplizieren', icon: Copy, action: () => duplicateNode(contextMenu.nodeId) },
-              { label: 'Archivieren', icon: Archive, action: () => { handleUpdateNode({ status: 'archiviert' }); setContextMenu(null); } },
-              { label: 'L\u00f6schen', icon: Trash2, action: () => deleteNode(contextMenu.nodeId), danger: true },
-            ].map((item, idx) => (
-              <button
-                key={idx}
-                onClick={item.action}
-                className={`w-full text-left flex items-center gap-2.5 px-3 py-2 text-sm transition-colors ${
-                  item.danger
-                    ? 'text-[#EF4444] hover:bg-[#EF4444]/10'
-                    : 'text-[#A1A4AA] hover:text-white hover:bg-white/[0.06]'
-                }`}
-              >
-                <item.icon className="w-4 h-4" />
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Click outside to close context menu */}
-      {contextMenu && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setContextMenu(null)}
-        />
+          </div>
+        </>
       )}
 
-      {/* Status Bar (bottom) */}
-      <div className="absolute bottom-4 left-4 z-10 flex items-center gap-4 pointer-events-none">
-        <div className="bg-[#0C0D0F] border border-white/[0.06] rounded-lg px-3 py-1.5 shadow-lg">
-          <span className="text-xs text-[#5E626A]">
-            <span className="text-[#A1A4AA] font-medium">{visibleNodeCount}</span> Knoten
-            <span className="mx-1.5 text-white/[0.06]">|</span>
-            <span className="text-[#A1A4AA] font-medium">{edges.length}</span> Verbindungen
-            <span className="mx-1.5 text-white/[0.06]">|</span>
-            <span className="text-[#A1A4AA] font-medium">{stats.typeCount}</span> Typen
-          </span>
+      {/* ── OBSIDIAN VAULT VIEW ── */}
+      {activeTab === 'vault' && (
+        <div className="absolute inset-0 pt-16 px-4 pb-4">
+          <ObsidianVault
+            onShowInGraph={(noteId: string) => {
+              setActiveTab('graph');
+              // Find or create node for this note
+              const existing = nodes.find(n => n.obsidianNoteId === noteId);
+              if (existing) {
+                setSelectedId(existing.id);
+                // Center camera on node
+                setCamera(prev => ({
+                  ...prev,
+                  targetX: -existing.x * prev.zoom,
+                  targetY: -existing.y * prev.zoom,
+                  targetZoom: 1.2,
+                }));
+              }
+            }}
+          />
         </div>
-      </div>
-
-      {/* Node type legend (bottom right) */}
-      <div className="absolute bottom-4 right-4 z-10 pointer-events-none">
-        <div className="bg-[#0C0D0F] border border-white/[0.06] rounded-lg px-3 py-2 shadow-lg">
-          <div className="flex flex-wrap gap-x-3 gap-y-1 max-w-[240px]">
-            {NODE_TYPE_OPTIONS.slice(0, 6).map(type => (
-              <div key={type} className="flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: NODE_COLORS[type] }} />
-                <span className="text-[10px] text-[#5E626A]">{NODE_TYPE_LABELS[type]}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
