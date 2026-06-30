@@ -1,400 +1,155 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '../supabase';
-import type { RealtimeChannel } from '@supabase/supabase-js';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
+import type { ExecutionBackend } from './useExecutionRouter';
 
-export type TaskStatus =
-  | 'pending'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'paused_awaiting_confirmation'
-  | 'cancelled';
-
-export type TaskPriority = 'low' | 'medium' | 'high' | 'critical';
-
-export type TaskPhase =
-  | 'intake'
-  | 'routing'
-  | 'execution'
-  | 'validation'
-  | 'review'
-  | 'completion';
-
-export type LegalCheckStatus = 'not_started' | 'in_progress' | 'passed' | 'failed' | 'concerns';
-
-export interface AgentTask {
+export interface TaskQueueItem {
   id: string;
-  agent_id: string;
+  agentId: string;
+  agentName: string;
   title: string;
-  description: string | null;
-  status: TaskStatus;
-  priority: TaskPriority;
-  backend: string | null;
-  execution_result: Record<string, unknown> | null;
-  execution_error: string | null;
-  assigned_to: string | null;
-  created_by: string | null;
-  phase: TaskPhase;
-  legal_check_status: LegalCheckStatus;
-  legal_concerns: string | null;
-  metadata: Record<string, unknown> | null;
-  started_at: string | null;
-  completed_at: string | null;
-  due_date: string | null;
-  created_at: string;
-  updated_at: string;
+  prompt: string;
+  backend: ExecutionBackend;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: 'queued' | 'assigned' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled' | 'retrying';
+  result?: string;
+  resultSummary?: string;
+  errorMessage?: string;
+  startedAt?: string;
+  completedAt?: string;
+  duration?: number;
+  tokensUsed?: number;
+  sessionId?: string;
+  delegatedTo?: string;
+  createdAt: string;
 }
 
 export interface TaskQueueState {
-  tasks: AgentTask[];
-  pendingTasks: AgentTask[];
-  runningTasks: AgentTask[];
-  pausedTasks: AgentTask[];
-  completedTasks: AgentTask[];
+  items: TaskQueueItem[];
   isLoading: boolean;
   error: string | null;
 }
 
-/**
- * Hook for task queue management with Supabase Realtime.
- *
- * Provides live task lists segmented by status, CRUD operations,
- * legal-review pausing/resuming, and automatic cleanup of subscriptions.
- */
 export function useTaskQueue() {
-  const [tasks, setTasks] = useState<AgentTask[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const channelRef = useRef<RealtimeChannel | null>(null);
+  const [state, setState] = useState<TaskQueueState>({
+    items: [],
+    isLoading: false,
+    error: null,
+  });
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
-  // Derived task lists
-  const pendingTasks = tasks.filter((t) => t.status === 'pending');
-  const runningTasks = tasks.filter((t) => t.status === 'running');
-  const pausedTasks = tasks.filter((t) => t.status === 'paused_awaiting_confirmation');
-  const completedTasks = tasks.filter((t) => t.status === 'completed');
-
-  /**
-   * Fetch all tasks from Supabase on mount.
-   */
-  const fetchTasks = useCallback(async () => {
+  const loadTasks = useCallback(async (limit: number = 50) => {
+    setState(s => ({ ...s, isLoading: true, error: null }));
     try {
-      setIsLoading(true);
-      setError(null);
-
-      const { data, error: fetchError } = await supabase
+      const { data, error } = await supabase
         .from('loop_agent_tasks')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (fetchError) {
-        setError(`Failed to fetch tasks: ${fetchError.message}`);
-        return;
-      }
-
-      setTasks((data as AgentTask[]) ?? []);
+        .select(`id, agent_id, title, description, prompt, execution_backend, priority, status, result, result_summary, error_message, started_at, completed_at, actual_duration, tokens_used, session_id, delegated_to_agent_id, created_at, loop_agents!loop_agent_tasks_agent_id_fkey(display_name)`)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      const items: TaskQueueItem[] = (data || []).map((row: Record<string, unknown>) => ({
+        id: row.id as string,
+        agentId: (row.agent_id as string) || '',
+        agentName: (row.loop_agents as { display_name?: string } | null)?.display_name || 'Meta Agent',
+        title: (row.title as string) || 'Untitled',
+        prompt: (row.prompt as string) || (row.description as string) || '',
+        backend: (row.execution_backend as ExecutionBackend) || 'simulation',
+        priority: (row.priority as TaskQueueItem['priority']) || 'medium',
+        status: (row.status as TaskQueueItem['status']) || 'queued',
+        result: (row.result as string) || undefined,
+        resultSummary: (row.result_summary as string) || undefined,
+        errorMessage: (row.error_message as string) || undefined,
+        startedAt: (row.started_at as string) || undefined,
+        completedAt: (row.completed_at as string) || undefined,
+        duration: (row.actual_duration as number) || undefined,
+        tokensUsed: (row.tokens_used as number) || undefined,
+        sessionId: (row.session_id as string) || undefined,
+        delegatedTo: (row.delegated_to_agent_id as string) || undefined,
+        createdAt: (row.created_at as string) || new Date().toISOString(),
+      }));
+      setState(s => ({ ...s, items, isLoading: false }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error fetching tasks');
-    } finally {
-      setIsLoading(false);
+      setState(s => ({ ...s, isLoading: false, error: (err as Error).message }));
     }
   }, []);
 
-  /**
-   * Create a new task in the queue.
-   */
-  const createTask = useCallback(
-    async (task: Partial<AgentTask>): Promise<{ id: string } | null> => {
-      try {
-        setError(null);
-
-        const insertPayload = {
-          agent_id: task.agent_id,
-          title: task.title ?? 'Untitled Task',
-          description: task.description,
-          status: (task.status ?? 'pending') as TaskStatus,
-          priority: (task.priority ?? 'medium') as TaskPriority,
-          backend: task.backend,
-          phase: (task.phase ?? 'intake') as TaskPhase,
-          legal_check_status: 'not_started' as LegalCheckStatus,
-          legal_concerns: null,
-          metadata: task.metadata ?? {},
-          due_date: task.due_date,
-          created_by: task.created_by,
-          assigned_to: task.assigned_to,
-        };
-
-        const { data, error: insertError } = await supabase
-          .from('loop_agent_tasks')
-          .insert(insertPayload)
-          .select('id')
-          .single();
-
-        if (insertError) {
-          setError(`Failed to create task: ${insertError.message}`);
-          return null;
-        }
-
-        return { id: data.id as string };
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error creating task');
-        return null;
-      }
-    },
-    []
-  );
-
-  /**
-   * Update a task's status and optionally its result.
-   */
-  const updateTaskStatus = useCallback(
-    async (
-      id: string,
-      status: TaskStatus,
-      result?: Record<string, unknown>
-    ): Promise<boolean> => {
-      try {
-        setError(null);
-
-        const updatePayload: Record<string, unknown> = {
-          status,
-          updated_at: new Date().toISOString(),
-        };
-
-        if (status === 'running' && !result) {
-          updatePayload.started_at = new Date().toISOString();
-        }
-
-        if (status === 'completed' || status === 'failed') {
-          updatePayload.completed_at = new Date().toISOString();
-        }
-
-        if (result) {
-          updatePayload.execution_result = result;
-        }
-
-        const { error: updateError } = await supabase
-          .from('loop_agent_tasks')
-          .update(updatePayload)
-          .eq('id', id);
-
-        if (updateError) {
-          setError(`Failed to update task: ${updateError.message}`);
-          return false;
-        }
-
-        // Optimistic local update
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === id
-              ? {
-                  ...t,
-                  status,
-                  ...(result ? { execution_result: result } : {}),
-                  ...(status === 'running' && !t.started_at
-                    ? { started_at: new Date().toISOString() }
-                    : {}),
-                  ...(status === 'completed' || status === 'failed'
-                    ? { completed_at: new Date().toISOString() }
-                    : {}),
-                  updated_at: new Date().toISOString(),
-                }
-              : t
-          )
-        );
-
-        return true;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error updating task');
-        return false;
-      }
-    },
-    []
-  );
-
-  /**
-   * Pause a task for legal review.
-   * Sets status to 'paused_awaiting_confirmation' and records concerns.
-   */
-  const pauseTaskForLegalReview = useCallback(
-    async (id: string, concerns: string): Promise<boolean> => {
-      try {
-        setError(null);
-
-        const { error: updateError } = await supabase
-          .from('loop_agent_tasks')
-          .update({
-            status: 'paused_awaiting_confirmation',
-            legal_check_status: 'concerns',
-            legal_concerns: concerns,
-            phase: 'review',
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', id);
-
-        if (updateError) {
-          setError(`Failed to pause task for legal review: ${updateError.message}`);
-          return false;
-        }
-
-        // Optimistic local update
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === id
-              ? {
-                  ...t,
-                  status: 'paused_awaiting_confirmation' as TaskStatus,
-                  legal_check_status: 'concerns' as LegalCheckStatus,
-                  legal_concerns: concerns,
-                  phase: 'review' as TaskPhase,
-                  updated_at: new Date().toISOString(),
-                }
-              : t
-          )
-        );
-
-        return true;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error pausing task');
-        return false;
-      }
-    },
-    []
-  );
-
-  /**
-   * Resume a paused task (after Phelan approval).
-   * Returns the task to 'pending' status.
-   */
-  const resumeTask = useCallback(async (id: string): Promise<boolean> => {
+  const createTask = useCallback(async (params: {
+    agentId?: string; title: string; prompt: string; backend?: ExecutionBackend; priority?: TaskQueueItem['priority'];
+  }): Promise<string | null> => {
     try {
-      setError(null);
-
-      const { error: updateError } = await supabase
-        .from('loop_agent_tasks')
-        .update({
-          status: 'pending',
-          phase: 'intake',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id);
-
-      if (updateError) {
-        setError(`Failed to resume task: ${updateError.message}`);
-        return false;
-      }
-
-      // Optimistic local update
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                status: 'pending' as TaskStatus,
-                phase: 'intake' as TaskPhase,
-                updated_at: new Date().toISOString(),
-              }
-            : t
-        )
-      );
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error resuming task');
-      return false;
-    }
+      const { data, error } = await supabase.from('loop_agent_tasks').insert({
+        agent_id: params.agentId, title: params.title, description: params.prompt.slice(0, 500),
+        prompt: params.prompt, execution_backend: params.backend || 'simulation',
+        priority: params.priority || 'medium', status: 'queued',
+      }).select('id').single();
+      if (error) { console.warn('[useTaskQueue] createTask error:', error.message); return null; }
+      const newItem: TaskQueueItem = {
+        id: data.id, agentId: params.agentId || '', agentName: 'Meta Agent', title: params.title,
+        prompt: params.prompt, backend: params.backend || 'simulation', priority: params.priority || 'medium',
+        status: 'queued', createdAt: new Date().toISOString(),
+      };
+      setState(s => ({ ...s, items: [newItem, ...s.items].slice(0, 50) }));
+      return data.id;
+    } catch (err) { console.warn('[useTaskQueue] createTask failed:', err); return null; }
   }, []);
 
-  /**
-   * Cancel a task permanently.
-   */
-  const cancelTask = useCallback(async (id: string): Promise<boolean> => {
+  const updateTaskStatus = useCallback(async (taskId: string, status: TaskQueueItem['status'], updates?: Partial<TaskQueueItem>) => {
     try {
-      setError(null);
-
-      const { error: updateError } = await supabase
-        .from('loop_agent_tasks')
-        .update({
-          status: 'cancelled',
-          phase: 'completion',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', id);
-
-      if (updateError) {
-        setError(`Failed to cancel task: ${updateError.message}`);
-        return false;
-      }
-
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? {
-                ...t,
-                status: 'cancelled' as TaskStatus,
-                phase: 'completion' as TaskPhase,
-                updated_at: new Date().toISOString(),
-              }
-            : t
-        )
-      );
-
-      return true;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error cancelling task');
-      return false;
-    }
+      const dbUpdates: Record<string, unknown> = { status };
+      if (updates?.result) dbUpdates.result = updates.result;
+      if (updates?.errorMessage) dbUpdates.error_message = updates.errorMessage;
+      if (updates?.startedAt) dbUpdates.started_at = updates.startedAt;
+      if (updates?.completedAt) dbUpdates.completed_at = updates.completedAt;
+      if (updates?.duration) dbUpdates.actual_duration = updates.duration;
+      if (status === 'running' && !updates?.startedAt) dbUpdates.started_at = new Date().toISOString();
+      if (status === 'completed' || status === 'failed') dbUpdates.completed_at = new Date().toISOString();
+      await supabase.from('loop_agent_tasks').update(dbUpdates).eq('id', taskId);
+      setState(s => ({ ...s, items: s.items.map(item => item.id === taskId ? { ...item, status, ...updates } : item) }));
+    } catch (err) { console.warn('[useTaskQueue] updateTaskStatus failed:', err); }
   }, []);
 
-  // Initial fetch + Realtime subscription
-  useEffect(() => {
-    fetchTasks();
+  const cancelTask = useCallback(async (taskId: string) => { await updateTaskStatus(taskId, 'cancelled'); }, [updateTaskStatus]);
+  const retryTask = useCallback(async (taskId: string) => { await updateTaskStatus(taskId, 'retrying', { errorMessage: undefined }); }, [updateTaskStatus]);
+  const deleteTask = useCallback(async (taskId: string) => {
+    try { await supabase.from('loop_agent_tasks').delete().eq('id', taskId); setState(s => ({ ...s, items: s.items.filter(i => i.id !== taskId) })); }
+    catch (err) { console.warn('[useTaskQueue] deleteTask failed:', err); }
+  }, []);
 
-    channelRef.current = supabase
-      .channel('loop_agent_tasks_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'loop_agent_tasks',
-        },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setTasks((prev) => [payload.new as AgentTask, ...prev]);
-          } else if (payload.eventType === 'UPDATE') {
-            setTasks((prev) =>
-              prev.map((t) =>
-                t.id === (payload.new as AgentTask).id ? (payload.new as AgentTask) : t
-              )
-            );
-          } else if (payload.eventType === 'DELETE') {
-            setTasks((prev) => prev.filter((t) => t.id !== (payload.old as { id: string }).id));
-          }
+  const setupRealtime = useCallback(() => {
+    if (channelRef.current) supabase.removeChannel(channelRef.current);
+    const channel = supabase.channel('loop_agent_tasks_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'loop_agent_tasks' }, (payload) => {
+        const newRecord = payload.new as Record<string, unknown>;
+        const oldRecord = payload.old as Record<string, unknown>;
+        if (payload.eventType === 'INSERT') {
+          const item: TaskQueueItem = {
+            id: newRecord.id as string, agentId: (newRecord.agent_id as string) || '', agentName: 'Meta Agent',
+            title: (newRecord.title as string) || 'Untitled', prompt: (newRecord.prompt as string) || '',
+            backend: (newRecord.execution_backend as ExecutionBackend) || 'simulation',
+            priority: (newRecord.priority as TaskQueueItem['priority']) || 'medium',
+            status: (newRecord.status as TaskQueueItem['status']) || 'queued',
+            createdAt: (newRecord.created_at as string) || new Date().toISOString(),
+          };
+          setState(s => ({ ...s, items: [item, ...s.items].slice(0, 50) }));
+        } else if (payload.eventType === 'UPDATE') {
+          setState(s => ({
+            ...s,
+            items: s.items.map(item => item.id === newRecord.id ? {
+              ...item, status: (newRecord.status as TaskQueueItem['status']) || item.status,
+              result: (newRecord.result as string) || item.result, resultSummary: (newRecord.result_summary as string) || item.resultSummary,
+              errorMessage: (newRecord.error_message as string) || item.errorMessage, startedAt: (newRecord.started_at as string) || item.startedAt,
+              completedAt: (newRecord.completed_at as string) || item.completedAt, duration: (newRecord.actual_duration as number) || item.duration,
+              tokensUsed: (newRecord.tokens_used as number) || item.tokensUsed,
+            } : item),
+          }));
+        } else if (payload.eventType === 'DELETE') {
+          setState(s => ({ ...s, items: s.items.filter(i => i.id !== oldRecord.id) }));
         }
-      )
-      .subscribe();
+      }).subscribe();
+    channelRef.current = channel;
+    return () => { if (channelRef.current) { supabase.removeChannel(channelRef.current); channelRef.current = null; } };
+  }, []);
 
-    return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-    };
-  }, [fetchTasks]);
+  useEffect(() => { const cleanup = setupRealtime(); loadTasks(); return cleanup; }, [setupRealtime, loadTasks]);
 
-  return {
-    tasks,
-    pendingTasks,
-    runningTasks,
-    pausedTasks,
-    completedTasks,
-    createTask,
-    updateTaskStatus,
-    pauseTaskForLegalReview,
-    resumeTask,
-    cancelTask,
-    isLoading,
-    error,
-    refresh: fetchTasks,
-  };
+  return { ...state, loadTasks, createTask, updateTaskStatus, cancelTask, retryTask, deleteTask, setupRealtime };
 }
