@@ -11,6 +11,8 @@ import Verdienst from '@/pages/Verdienst';
 import Rechnungen from '@/pages/Rechnungen';
 import Chat from '@/pages/Chat';
 import Brain from '@/pages/Brain';
+import Agenten from '@/pages/Agenten';
+import HermesBrain from '@/pages/HermesBrain';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -33,6 +35,8 @@ function App() {
         <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
           <Route path="brain" element={<Brain />} />
+          <Route path="agenten" element={<Agenten />} />
+          <Route path="hermes-brain" element={<HermesBrain />} />
           <Route path="kunden" element={<Kunden />} />
           <Route path="websites" element={<Websites />} />
           <Route path="projekte" element={<Projekte />} />
