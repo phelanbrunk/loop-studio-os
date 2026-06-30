@@ -1,218 +1,32 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '../supabase';
-import type { RealtimeChannel } from '@supabase/supabase-js';
+import { useEffect, useRef, useCallback } from 'react';
+import { supabase } from '@/lib/supabase';
 
-export type AgentStatus = 'idle' | 'running' | 'paused' | 'error' | 'offline';
-
-export interface AgentNode {
-  id: string;
-  name: string;
-  agentType: string;
-  status: AgentStatus;
-  description: string | null;
-  skills: string[] | null;
-  tierRequired: number;
-  avatar_url: string | null;
-  parent_agent_id: string | null;
-  max_concurrent_tasks: number;
-  config: Record<string, unknown> | null;
-  created_at: string;
-  updated_at: string;
+export interface AgentRealtimeState {
+  skillKey: string;
+  status: 'active' | 'idle' | 'error' | 'paused' | 'spawning';
+  tasks: number;
+  successRate: number;
+  lastActive: string;
 }
 
-/**
- * Status color mapping for UI display.
- */
-export const AGENT_STATUS_COLORS: Record<AgentStatus, string> = {
-  idle: 'text-gray-400',
-  running: 'text-green-400',
-  paused: 'text-yellow-400',
-  error: 'text-red-400',
-  offline: 'text-neutral-500',
-};
-
-export const AGENT_STATUS_BG_COLORS: Record<AgentStatus, string> = {
-  idle: 'bg-gray-400/10',
-  running: 'bg-green-400/10',
-  paused: 'bg-yellow-400/10',
-  error: 'bg-red-400/10',
-  offline: 'bg-neutral-500/10',
-};
-
-export const AGENT_STATUS_DOT_COLORS: Record<AgentStatus, string> = {
-  idle: 'bg-gray-400',
-  running: 'bg-green-400 animate-pulse',
-  paused: 'bg-yellow-400',
-  error: 'bg-red-400',
-  offline: 'bg-neutral-500',
-};
-
-export type AgentUpdateCallback = (agent: AgentNode) => void;
+export type AgentStatusCallback = (skillKey: string, state: AgentRealtimeState) => void;
 
 /**
- * Hook for live agent node status with Supabase Realtime.
- *
- * Provides:
- * - `agents` — all agents with live status updates
- * - `getAgentStatus(id)` — look up a single agent by ID
- * - `subscribeToAgentUpdates(callback)` — register a callback for agent changes
- * - Status color helpers for UI rendering
+ * useAgentRealtime — Subscribes to live agent status changes from Supabase.
+ * Updates canvas nodes in real-time when agent status changes in the DB.
  */
-export function useAgentRealtime() {
-  const [agents, setAgents] = useState<AgentNode[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const channelRef = useRef<RealtimeChannel | null>(null);
-  const callbacksRef = useRef<AgentUpdateCallback[]>([]);
+export function useAgentRealtime(onStatusChange: AgentStatusCallback) {
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const callbackRef = useRef(onStatusChange);
+  callbackRef.current = onStatusChange;
 
-  /**
-   * Fetch all agents from Supabase.
-   */
-  const fetchAgents = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError(null);
-
-      const { data, error: fetchError } = await supabase
-        .from('loop_agents')
-        .select('*')
-        .order('name', { ascending: true });
-
-      if (fetchError) {
-        setError(`Failed to fetch agents: ${fetchError.message}`);
-        return;
-      }
-
-      const mapped = (data ?? []).map((row) => ({
-        id: row.id as string,
-        name: row.name as string,
-        agentType: row.agent_type as string,
-        status: (row.status as AgentStatus) ?? 'offline',
-        description: (row.description as string | null) ?? null,
-        skills: (row.skills as string[] | null) ?? null,
-        tierRequired: (row.tier_required as number) ?? 1,
-        avatar_url: (row.avatar_url as string | null) ?? null,
-        parent_agent_id: (row.parent_agent_id as string | null) ?? null,
-        max_concurrent_tasks: (row.max_concurrent_tasks as number) ?? 1,
-        config: (row.config as Record<string, unknown> | null) ?? null,
-        created_at: (row.created_at as string) ?? new Date().toISOString(),
-        updated_at: (row.updated_at as string) ?? new Date().toISOString(),
-      })) as AgentNode[];
-
-      setAgents(mapped);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error fetching agents');
-    } finally {
-      setIsLoading(false);
+  const subscribe = useCallback(() => {
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
     }
-  }, []);
 
-  /**
-   * Get a single agent by ID. Returns a default offline node if not found.
-   */
-  const getAgentStatus = useCallback(
-    (id: string): AgentNode => {
-      const found = agents.find((a) => a.id === id);
-      if (found) return found;
-
-      // Return a safe fallback so callers never get undefined
-      return {
-        id,
-        name: 'Unknown Agent',
-        agentType: 'unknown',
-        status: 'offline',
-        description: null,
-        skills: null,
-        tierRequired: 1,
-        avatar_url: null,
-        parent_agent_id: null,
-        max_concurrent_tasks: 1,
-        config: null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-    },
-    [agents]
-  );
-
-  /**
-   * Subscribe to agent update events.
-   * The callback fires whenever any agent's row changes via Realtime.
-   */
-  const subscribeToAgentUpdates = useCallback((callback: AgentUpdateCallback) => {
-    callbacksRef.current.push(callback);
-
-    // Return unsubscribe function
-    return () => {
-      callbacksRef.current = callbacksRef.current.filter((cb) => cb !== callback);
-    };
-  }, []);
-
-  /**
-   * Update an agent's status directly (useful for optimistic UI updates).
-   */
-  const updateAgentStatus = useCallback(
-    async (id: string, status: AgentStatus): Promise<boolean> => {
-      try {
-        setError(null);
-
-        const { error: updateError } = await supabase
-          .from('loop_agents')
-          .update({
-            status,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', id);
-
-        if (updateError) {
-          setError(`Failed to update agent status: ${updateError.message}`);
-          return false;
-        }
-
-        // Optimistic update
-        setAgents((prev) =>
-          prev.map((a) =>
-            a.id === id
-              ? { ...a, status, updated_at: new Date().toISOString() }
-              : a
-          )
-        );
-
-        return true;
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error updating agent');
-        return false;
-      }
-    },
-    []
-  );
-
-  /**
-   * Get agents filtered by a specific status.
-   */
-  const getAgentsByStatus = useCallback(
-    (status: AgentStatus): AgentNode[] => {
-      return agents.filter((a) => a.status === status);
-    },
-    [agents]
-  );
-
-  /**
-   * Get agents filtered by type.
-   */
-  const getAgentsByType = useCallback(
-    (agentType: string): AgentNode[] => {
-      return agents.filter((a) => a.agentType.toLowerCase() === agentType.toLowerCase());
-    },
-    [agents]
-  );
-
-  // Initial fetch + Realtime subscription
-  useEffect(() => {
-    fetchAgents();
-
-    channelRef.current = supabase
-      .channel('loop_agents_changes')
+    const channel = supabase
+      .channel('loop_agents_realtime')
       .on(
         'postgres_changes',
         {
@@ -221,49 +35,41 @@ export function useAgentRealtime() {
           table: 'loop_agents',
         },
         (payload) => {
-          const newAgent = payload.new as AgentNode;
-          const oldAgent = payload.old as AgentNode;
+          const record = payload.new as Record<string, unknown>;
+          if (!record) return;
 
-          if (payload.eventType === 'INSERT') {
-            setAgents((prev) => {
-              // Avoid duplicates
-              if (prev.some((a) => a.id === newAgent.id)) return prev;
-              return [...prev, newAgent];
-            });
-            // Notify subscribers
-            callbacksRef.current.forEach((cb) => cb(newAgent));
-          } else if (payload.eventType === 'UPDATE') {
-            setAgents((prev) =>
-              prev.map((a) => (a.id === newAgent.id ? newAgent : a))
-            );
-            // Notify subscribers
-            callbacksRef.current.forEach((cb) => cb(newAgent));
-          } else if (payload.eventType === 'DELETE') {
-            setAgents((prev) =>
-              prev.filter((a) => a.id !== (oldAgent as unknown as { id: string }).id)
-            );
-          }
+          const skillKey = record.skill_key as string;
+          if (!skillKey) return;
+
+          const state: AgentRealtimeState = {
+            skillKey,
+            status: (record.status as AgentRealtimeState['status']) || 'idle',
+            tasks: (record.task_count as number) || 0,
+            successRate: (record.metrics as { success_rate?: number })?.success_rate || 95,
+            lastActive: (record.last_active as string) || new Date().toISOString(),
+          };
+
+          callbackRef.current(skillKey, state);
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        console.log('[AgentRealtime] Subscription status:', status);
+      });
 
-    return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
-    };
-  }, [fetchAgents]);
+    channelRef.current = channel;
+  }, []);
 
-  return {
-    agents,
-    getAgentStatus,
-    subscribeToAgentUpdates,
-    updateAgentStatus,
-    getAgentsByStatus,
-    getAgentsByType,
-    isLoading,
-    error,
-    refresh: fetchAgents,
-  };
+  const unsubscribe = useCallback(() => {
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    subscribe();
+    return unsubscribe;
+  }, [subscribe, unsubscribe]);
+
+  return { subscribe, unsubscribe };
 }
