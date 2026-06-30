@@ -21,7 +21,7 @@
  *   - German law compliance for all operations
  */
 
-import { supabase } from '../supabase';
+import { supabase } from './supabase';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES

@@ -78,7 +78,7 @@ interface PhaseData {
   checks?: SafetyCheck[];
   actions?: ActionItem[];
   learnings?: string[];
-  metrics?: Record<string, number>;
+  metrics?: Record<string, string | number>;
 }
 
 interface Phase {
